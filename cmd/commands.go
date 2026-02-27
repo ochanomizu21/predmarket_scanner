@@ -18,6 +18,8 @@ import (
 var (
 	fetchLimit      int
 	fetchMaxMarkets int
+	fetchMinOutcomes int
+	fetchMaxOutcomes int
 	minProfit       float64
 	scanLimit       int
 	scanMaxMarkets  int
@@ -44,6 +46,8 @@ var FetchMarketsCmd = &cobra.Command{
 func init() {
 	FetchMarketsCmd.Flags().IntVarP(&fetchLimit, "limit", "l", 10, "Number of markets to display")
 	FetchMarketsCmd.Flags().IntVarP(&fetchMaxMarkets, "max-markets", "m", 0, "Maximum number of markets to fetch (0 = all)")
+	FetchMarketsCmd.Flags().IntVar(&fetchMinOutcomes, "min-outcomes", 0, "Minimum number of outcomes")
+	FetchMarketsCmd.Flags().IntVar(&fetchMaxOutcomes, "max-outcomes", 0, "Maximum number of outcomes")
 	ScanCmd.Flags().Float64VarP(&minProfit, "min-profit", "p", 0.001, "Minimum profit threshold")
 	ScanCmd.Flags().IntVarP(&scanLimit, "limit", "l", 100, "Maximum number of opportunities to display")
 	ScanCmd.Flags().IntVar(&scanMaxMarkets, "max-markets", 0, "Maximum number of markets to fetch (0 = all)")
@@ -63,8 +67,20 @@ func init() {
 func runFetchMarkets(cmd *cobra.Command, args []string) error {
 	fmt.Println("Fetching markets from Polymarket...")
 
+	if fetchMinOutcomes > 0 || fetchMaxOutcomes > 0 {
+		filterStr := ""
+		if fetchMinOutcomes > 0 && fetchMaxOutcomes > 0 {
+			filterStr = fmt.Sprintf(" (outcomes: %d-%d)", fetchMinOutcomes, fetchMaxOutcomes)
+		} else if fetchMinOutcomes > 0 {
+			filterStr = fmt.Sprintf(" (outcomes: %d+)", fetchMinOutcomes)
+		} else if fetchMaxOutcomes > 0 {
+			filterStr = fmt.Sprintf(" (outcomes: %d-)", fetchMaxOutcomes)
+		}
+		fmt.Printf("Applying filter%s\n", filterStr)
+	}
+
 	client := clients.NewPolymarketClient()
-	markets, err := client.FetchMarkets(fetchMaxMarkets)
+	markets, err := client.FetchMarketsFilter(fetchMaxMarkets, fetchMinOutcomes, fetchMaxOutcomes)
 	if err != nil {
 		return fmt.Errorf("fetching markets: %w", err)
 	}

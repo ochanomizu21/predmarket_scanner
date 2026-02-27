@@ -34,6 +34,8 @@ predmarket-scanner fetch-markets [flags]
 |------|------|---------|-------------|
 | `-l, --limit` | int | 10 | Number of markets to display |
 | `-m, --max-markets` | int | 0 (all) | Maximum number of markets to fetch |
+| `--min-outcomes` | int | 0 | Minimum number of outcomes (0 = no minimum) |
+| `--max-outcomes` | int | 0 | Maximum number of outcomes (0 = no maximum) |
 
 ### Examples
 
@@ -46,6 +48,15 @@ predmarket-scanner fetch-markets --limit 5 --max-markets 100
 
 # Fetch all markets (approximately 34K) and display first 20
 predmarket-scanner fetch-markets --limit 20
+
+# Filter for binary markets (exactly 2 outcomes)
+predmarket-scanner fetch-markets --min-outcomes 2 --max-outcomes 2
+
+# Filter for multi-outcome markets (3+ outcomes)
+predmarket-scanner fetch-markets --min-outcomes 3
+
+# Filter for markets with 2-5 outcomes
+predmarket-scanner fetch-markets --min-outcomes 2 --max-outcomes 5
 ```
 
 ---

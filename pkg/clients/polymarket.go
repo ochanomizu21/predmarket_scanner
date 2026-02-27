@@ -78,6 +78,10 @@ func (c *PolymarketClient) FetchAllMarkets() ([]types.Market, error) {
 }
 
 func (c *PolymarketClient) FetchMarkets(limit int) ([]types.Market, error) {
+	return c.FetchMarketsFilter(limit, 0, 0)
+}
+
+func (c *PolymarketClient) FetchMarketsFilter(limit, minOutcomes, maxOutcomes int) ([]types.Market, error) {
 	gammaMarkets, err := c.fetchGammaMarketsWithLimit(limit)
 	if err != nil {
 		return nil, fmt.Errorf("fetching gamma markets: %w", err)
@@ -85,9 +89,20 @@ func (c *PolymarketClient) FetchMarkets(limit int) ([]types.Market, error) {
 
 	var markets []types.Market
 	for _, gammaMarket := range gammaMarkets {
-		if market, ok := c.convertMarket(gammaMarket); ok {
-			markets = append(markets, market)
+		market, ok := c.convertMarket(gammaMarket)
+		if !ok {
+			continue
 		}
+
+		outcomeCount := len(market.Outcomes)
+		if minOutcomes > 0 && outcomeCount < minOutcomes {
+			continue
+		}
+		if maxOutcomes > 0 && outcomeCount > maxOutcomes {
+			continue
+		}
+
+		markets = append(markets, market)
 	}
 
 	return markets, nil
