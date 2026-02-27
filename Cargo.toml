@@ -1,0 +1,27 @@
+[package]
+name = "predmarket_scanner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+clap = { version = "4", features = ["derive"] }
+polymarket-client-sdk = { version = "0.4", features = ["gamma", "clob"] }
+rust_decimal = "1.36"
+alloy = "1.6"
+reqwest = { version = "0.11", features = ["json"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono"] }
+rusqlite = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+csv = "1.3"
+tabled = "0.17"
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "trace"] }
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1.10"
+log = "0.4"
+env_logger = "0.11"
