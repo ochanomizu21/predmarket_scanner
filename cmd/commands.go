@@ -2,10 +2,14 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ochanomizu/predmarket-scanner/pkg/clients"
+	"github.com/ochanomizu/predmarket-scanner/pkg/database"
 	"github.com/ochanomizu/predmarket-scanner/pkg/output"
+	"github.com/ochanomizu/predmarket-scanner/pkg/providers"
 	"github.com/ochanomizu/predmarket-scanner/pkg/strategies"
 	"github.com/ochanomizu/predmarket-scanner/pkg/types"
 	"github.com/spf13/cobra"
@@ -19,8 +23,15 @@ var (
 	scanMaxMarkets  int
 	executionSize   float64
 	maxSlippage     float64
+	strategyType    string
 	exportFormat    string
 	exportOutput    string
+	recordInterval  int
+	recordMaxMarkets int
+	historicalMode  bool
+	historicalTime  string
+	timeRange      string
+	dbPath         string
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -38,8 +49,15 @@ func init() {
 	ScanCmd.Flags().IntVar(&scanMaxMarkets, "max-markets", 0, "Maximum number of markets to fetch (0 = all)")
 	ScanCmd.Flags().Float64VarP(&executionSize, "size", "s", 1000, "Execution size in USDC")
 	ScanCmd.Flags().Float64Var(&maxSlippage, "max-slippage", 5.0, "Maximum slippage in percent")
+	ScanCmd.Flags().StringVar(&strategyType, "strategy", "all", "Strategy to use (all, dutch_book, multi_outcome)")
+	ScanCmd.Flags().BoolVar(&historicalMode, "historical", false, "Enable historical backtesting mode")
+	ScanCmd.Flags().StringVar(&historicalTime, "time", "", "Target historical timestamp (YYYY-MM-DD HH:MM:SS)")
+	ScanCmd.Flags().StringVar(&timeRange, "time-range", "", "Time range for historical scanning (start,end)")
+	ScanCmd.Flags().StringVar(&dbPath, "db", "data/history.db", "Path to SQLite database for historical data")
 	ExportCmd.Flags().StringVarP(&exportFormat, "format", "f", "json", "Export format (json or csv)")
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
+	RecordCmd.Flags().IntVarP(&recordInterval, "interval", "i", 60, "Recording interval in seconds")
+	RecordCmd.Flags().IntVar(&recordMaxMarkets, "max-markets", 500, "Maximum number of markets to record")
 }
 
 func runFetchMarkets(cmd *cobra.Command, args []string) error {
@@ -102,18 +120,64 @@ var ScanCmd = &cobra.Command{
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
-	fmt.Println("Fetching markets from Polymarket...")
+	var provider providers.DataProvider
 
-	client := clients.NewPolymarketClient()
-	markets, err := client.FetchMarkets(scanMaxMarkets)
+	if historicalMode {
+		if historicalTime == "" && timeRange == "" {
+			return fmt.Errorf("--time or --time-range is required in historical mode")
+		}
+
+		db, err := database.Open(dbPath)
+		if err != nil {
+			return fmt.Errorf("opening database: %w", err)
+		}
+		defer db.Close()
+
+		if timeRange != "" {
+			parts := strings.Split(timeRange, ",")
+			if len(parts) != 2 {
+				return fmt.Errorf("invalid time-range format, expected 'start,end'")
+			}
+
+			fmt.Printf("Scanning historical data from %s to %s...\n", parts[0], parts[1])
+		} else {
+			fmt.Printf("Fetching markets from historical data at %s...\n", historicalTime)
+
+			targetTime, err := time.Parse("2006-01-02 15:04:05", historicalTime)
+			if err != nil {
+				return fmt.Errorf("parsing time: %w", err)
+			}
+			provider = providers.NewHistoricalDataProvider(db, targetTime)
+		}
+	} else {
+		fmt.Println("Fetching markets from Polymarket...")
+		provider = providers.NewLiveDataProvider()
+	}
+
+	markets, err := provider.FetchMarkets(scanMaxMarkets)
 	if err != nil {
 		return fmt.Errorf("fetching markets: %w", err)
 	}
 
 	fmt.Printf("Found %d markets\n", len(markets))
 
-	fmt.Println("Scanning for arbitrage opportunities...")
-	opportunities := strategies.FindOpportunities(markets)
+	fmt.Printf("Scanning for arbitrage opportunities (size: $%.2f, max-slippage: %.2f%%, strategy: %s)...\n",
+		executionSize, maxSlippage, strategyType)
+
+	var opportunities []types.ArbitrageOpportunity
+
+	switch strategyType {
+	case "dutch_book":
+		opportunities = strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+	case "multi_outcome":
+		opportunities = strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+	case "all":
+		dutchBookOpps := strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+		multiOutcomeOpps := strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+		opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+	default:
+		return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
+	}
 
 	var filtered []types.ArbitrageOpportunity
 	for _, opp := range opportunities {
@@ -138,6 +202,13 @@ var ExportCmd = &cobra.Command{
 	RunE:  runExport,
 }
 
+var RecordCmd = &cobra.Command{
+	Use:   "record",
+	Short: "Record historical market data",
+	Long:  "Run as a daemon to record market snapshots to SQLite database",
+	RunE:  runRecord,
+}
+
 func runExport(cmd *cobra.Command, args []string) error {
 	fmt.Println("Fetching markets...")
 
@@ -148,7 +219,20 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Scanning for opportunities...")
-	opportunities := strategies.FindOpportunities(markets)
+	var opportunities []types.ArbitrageOpportunity
+
+	switch strategyType {
+	case "dutch_book":
+		opportunities = strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+	case "multi_outcome":
+		opportunities = strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+	case "all":
+		dutchBookOpps := strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+		multiOutcomeOpps := strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+		opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+	default:
+		return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
+	}
 
 	var filename string
 	switch exportFormat {
@@ -173,4 +257,108 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Exported %d opportunities to %s\n", len(opportunities), filename)
 	return nil
+}
+
+func runRecord(cmd *cobra.Command, args []string) error {
+	fmt.Println("Starting historical data recording daemon...")
+
+	db, err := database.Open("data/history.db")
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	fmt.Printf("Recording to data/history.db\n")
+	fmt.Printf("Recording interval: %d seconds\n", recordInterval)
+	fmt.Printf("Max markets to record: %d\n", recordMaxMarkets)
+	fmt.Println("Press Ctrl+C to stop recording...")
+
+	client := clients.NewPolymarketClient()
+	ticker := time.NewTicker(time.Duration(recordInterval) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			fmt.Printf("\n[%s] Fetching markets...\n", time.Now().Format(time.RFC3339))
+
+			markets, err := client.FetchMarkets(recordMaxMarkets)
+			if err != nil {
+				fmt.Printf("Error fetching markets: %v\n", err)
+				continue
+			}
+
+			fmt.Printf("Fetched %d markets\n", len(markets))
+			fmt.Printf("Recording snapshots...\n")
+
+			recorded := 0
+			timestamp := time.Now()
+
+			for _, market := range markets {
+				err := db.InsertOrUpdateMarket(
+					market.ID,
+					market.Question,
+					market.EndTime,
+					market.Liquidity,
+					market.Volume,
+					len(market.Outcomes),
+				)
+				if err != nil {
+					fmt.Printf("Error inserting market %s: %v\n", market.ID, err)
+					continue
+				}
+
+				snapshotID, err := db.InsertSnapshot(market.ID, timestamp)
+				if err != nil {
+					fmt.Printf("Error inserting snapshot for market %s: %v\n", market.ID, err)
+					continue
+				}
+
+				for _, outcome := range market.Outcomes {
+					err := db.InsertOutcomeSnapshot(snapshotID, outcome.Name, outcome.Price, outcome.Price)
+					if err != nil {
+						fmt.Printf("Error inserting outcome snapshot for market %s: %v\n", market.ID, err)
+						continue
+					}
+
+					book, err := client.FetchOrderBook(outcome.Name)
+					if err != nil {
+						continue
+					}
+
+					bidLevels := make([]providers.OrderBookLevel, 0, len(book.Bids))
+					for _, bid := range book.Bids {
+						price, _ := strconv.ParseFloat(bid.Price, 64)
+						size, _ := strconv.ParseFloat(bid.Size, 64)
+						bidLevels = append(bidLevels, providers.OrderBookLevel{Price: price, Size: size})
+					}
+
+					if len(bidLevels) > 0 {
+						err := db.InsertOrderBookLevels(snapshotID, outcome.Name, "bid", bidLevels)
+						if err != nil {
+							fmt.Printf("Error inserting bid levels for market %s: %v\n", market.ID, err)
+						}
+					}
+
+					askLevels := make([]providers.OrderBookLevel, 0, len(book.Asks))
+					for _, ask := range book.Asks {
+						price, _ := strconv.ParseFloat(ask.Price, 64)
+						size, _ := strconv.ParseFloat(ask.Size, 64)
+						askLevels = append(askLevels, providers.OrderBookLevel{Price: price, Size: size})
+					}
+
+					if len(askLevels) > 0 {
+						err := db.InsertOrderBookLevels(snapshotID, outcome.Name, "ask", askLevels)
+						if err != nil {
+							fmt.Printf("Error inserting ask levels for market %s: %v\n", market.ID, err)
+						}
+					}
+				}
+
+				recorded++
+			}
+
+			fmt.Printf("Recorded %d market snapshots\n", recorded)
+		}
+	}
 }

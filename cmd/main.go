@@ -16,6 +16,7 @@ func main() {
 	rootCmd.AddCommand(FetchMarketsCmd)
 	rootCmd.AddCommand(ScanCmd)
 	rootCmd.AddCommand(ExportCmd)
+	rootCmd.AddCommand(RecordCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)

@@ -201,7 +201,7 @@ func (c *PolymarketClient) FetchOrderBooks(tokenIDs []string) (map[string]OrderB
 	books := make(map[string]OrderBook)
 
 	for _, tokenID := range tokenIDs {
-		book, err := c.fetchOrderBook(tokenID)
+		book, err := c.FetchOrderBook(tokenID)
 		if err != nil {
 			return nil, fmt.Errorf("fetching order book for token %s: %w", tokenID, err)
 		}
@@ -211,7 +211,7 @@ func (c *PolymarketClient) FetchOrderBooks(tokenIDs []string) (map[string]OrderB
 	return books, nil
 }
 
-func (c *PolymarketClient) fetchOrderBook(tokenID string) (OrderBook, error) {
+func (c *PolymarketClient) FetchOrderBook(tokenID string) (OrderBook, error) {
 	url := fmt.Sprintf("%s/book?token_id=%s", clobAPIBase, tokenID)
 
 	resp, err := c.httpClient.Get(url)
