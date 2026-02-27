@@ -20,6 +20,7 @@ var (
 	fetchMaxMarkets int
 	fetchMinOutcomes int
 	fetchMaxOutcomes int
+	fetchIncludeClosed bool
 	minProfit       float64
 	scanLimit       int
 	scanMaxMarkets  int
@@ -48,6 +49,7 @@ func init() {
 	FetchMarketsCmd.Flags().IntVarP(&fetchMaxMarkets, "max-markets", "m", 0, "Maximum number of markets to fetch (0 = all)")
 	FetchMarketsCmd.Flags().IntVar(&fetchMinOutcomes, "min-outcomes", 0, "Minimum number of outcomes")
 	FetchMarketsCmd.Flags().IntVar(&fetchMaxOutcomes, "max-outcomes", 0, "Maximum number of outcomes")
+	FetchMarketsCmd.Flags().BoolVar(&fetchIncludeClosed, "closed", false, "Include closed/resolved markets")
 	ScanCmd.Flags().Float64VarP(&minProfit, "min-profit", "p", 0.001, "Minimum profit threshold")
 	ScanCmd.Flags().IntVarP(&scanLimit, "limit", "l", 100, "Maximum number of opportunities to display")
 	ScanCmd.Flags().IntVar(&scanMaxMarkets, "max-markets", 0, "Maximum number of markets to fetch (0 = all)")
@@ -80,12 +82,17 @@ func runFetchMarkets(cmd *cobra.Command, args []string) error {
 	}
 
 	client := clients.NewPolymarketClient()
-	markets, err := client.FetchMarketsFilter(fetchMaxMarkets, fetchMinOutcomes, fetchMaxOutcomes)
+	markets, err := client.FetchMarketsFilter(fetchMaxMarkets, fetchMinOutcomes, fetchMaxOutcomes, fetchIncludeClosed)
 	if err != nil {
 		return fmt.Errorf("fetching markets: %w", err)
 	}
 
-	fmt.Printf("\nFetched %d total markets\n\n", len(markets))
+	marketType := "active"
+	if fetchIncludeClosed {
+		marketType = "active + closed"
+	}
+
+	fmt.Printf("\nFetched %d total %s markets\n\n", len(markets), marketType)
 
 	displayLimit := fetchLimit
 	if displayLimit > len(markets) {
@@ -229,7 +236,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	fmt.Println("Fetching markets...")
 
 	client := clients.NewPolymarketClient()
-	markets, err := client.FetchMarkets(0)
+	markets, err := client.FetchMarketsFilter(0, 0, 0, false)
 	if err != nil {
 		return fmt.Errorf("fetching markets: %w", err)
 	}
@@ -298,7 +305,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		case <-ticker.C:
 			fmt.Printf("\n[%s] Fetching markets...\n", time.Now().Format(time.RFC3339))
 
-			markets, err := client.FetchMarkets(recordMaxMarkets)
+			markets, err := client.FetchMarketsFilter(recordMaxMarkets, 0, 0, false)
 			if err != nil {
 				fmt.Printf("Error fetching markets: %v\n", err)
 				continue

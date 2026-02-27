@@ -78,11 +78,11 @@ func (c *PolymarketClient) FetchAllMarkets() ([]types.Market, error) {
 }
 
 func (c *PolymarketClient) FetchMarkets(limit int) ([]types.Market, error) {
-	return c.FetchMarketsFilter(limit, 0, 0)
+	return c.FetchMarketsFilter(limit, 0, 0, false)
 }
 
-func (c *PolymarketClient) FetchMarketsFilter(limit, minOutcomes, maxOutcomes int) ([]types.Market, error) {
-	gammaMarkets, err := c.fetchGammaMarketsWithLimit(limit)
+func (c *PolymarketClient) FetchMarketsFilter(limit, minOutcomes, maxOutcomes int, includeClosed bool) ([]types.Market, error) {
+	gammaMarkets, err := c.fetchGammaMarketsWithLimit(limit, includeClosed)
 	if err != nil {
 		return nil, fmt.Errorf("fetching gamma markets: %w", err)
 	}
@@ -95,7 +95,7 @@ func (c *PolymarketClient) FetchMarketsFilter(limit, minOutcomes, maxOutcomes in
 		}
 
 		outcomeCount := len(market.Outcomes)
-		if minOutcomes > 0 && outcomeCount < minOutcomes {
+		if minOutcomes >0 && outcomeCount < minOutcomes {
 			continue
 		}
 		if maxOutcomes > 0 && outcomeCount > maxOutcomes {
@@ -108,11 +108,15 @@ func (c *PolymarketClient) FetchMarketsFilter(limit, minOutcomes, maxOutcomes in
 	return markets, nil
 }
 
-func (c *PolymarketClient) fetchGammaMarkets() ([]GammaMarket, error) {
-	return c.fetchGammaMarketsWithLimit(0)
+func (c *PolymarketClient) FetchMarketsIncludeClosed(limit, minOutcomes, maxOutcomes int) ([]types.Market, error) {
+	return c.FetchMarketsFilter(limit, minOutcomes, maxOutcomes, true)
 }
 
-func (c *PolymarketClient) fetchGammaMarketsWithLimit(maxMarkets int) ([]GammaMarket, error) {
+func (c *PolymarketClient) fetchGammaMarkets(includeClosed bool) ([]GammaMarket, error) {
+	return c.fetchGammaMarketsWithLimit(0, includeClosed)
+}
+
+func (c *PolymarketClient) fetchGammaMarketsWithLimit(maxMarkets int, includeClosed bool) ([]GammaMarket, error) {
 	var allMarkets []GammaMarket
 	offset := 0
 	limit := 500
@@ -122,7 +126,11 @@ func (c *PolymarketClient) fetchGammaMarketsWithLimit(maxMarkets int) ([]GammaMa
 			break
 		}
 
-		url := fmt.Sprintf("%s/markets?limit=%d&offset=%d&closed=false", gammaAPIBase, limit, offset)
+		closedParam := "true"
+		if !includeClosed {
+			closedParam = "false"
+		}
+		url := fmt.Sprintf("%s/markets?limit=%d&offset=%d&closed=%s", gammaAPIBase, limit, offset, closedParam)
 
 		resp, err := c.httpClient.Get(url)
 		if err != nil {
