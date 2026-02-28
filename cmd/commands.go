@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ochanomizu/predmarket-scanner/pkg/clients"
@@ -47,6 +48,8 @@ var (
 	historyOffset    int
 	historyStartRank int
 	historyEndRank   int
+	historyWorkers  int
+	historySkipExisting bool
 	recordIncludeOrderBook bool
 	recordOrderBookLevels  int
 	fetchOffset    int
@@ -98,6 +101,8 @@ func init() {
 	FetchHistoryCmd.Flags().IntVar(&historyOffset, "offset", 0, "Skip first N markets (by liquidity)")
 	FetchHistoryCmd.Flags().IntVar(&historyStartRank, "start-rank", 0, "Start rank (1-based, inclusive)")
 	FetchHistoryCmd.Flags().IntVar(&historyEndRank, "end-rank", 0, "End rank (inclusive, 0 = unlimited)")
+	FetchHistoryCmd.Flags().IntVar(&historyWorkers, "workers", 10, "Number of concurrent workers for fetching")
+	FetchHistoryCmd.Flags().BoolVar(&historySkipExisting, "skip-existing", false, "Skip markets that already have price history")
 }
 
 func runFetchMarkets(cmd *cobra.Command, args []string) error {
@@ -601,6 +606,15 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Fetching markets: offset=%d, limit=%d\n", offset, limit)
 	}
 
+	if historyWorkers <= 0 {
+		historyWorkers = 10
+	}
+
+	fmt.Printf("Using %d concurrent workers\n", historyWorkers)
+	if historySkipExisting {
+		fmt.Printf("Skipping markets with existing price history\n")
+	}
+
 	client := clients.NewPolymarketClient()
 	markets, err := client.FetchMarketsFilterOffset(limit, offset, 0, 0, false)
 	if err != nil {
@@ -618,13 +632,153 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 
 	cutoffDate := time.Now().AddDate(0, 0, -historyMaxDays)
 
+	type fetchTask struct {
+		market     types.Market
+		outcomeIndex int
+		tokenID    string
+	}
+
+	var tasks []fetchTask
+	for _, market := range markets {
+		for i := range market.Outcomes {
+			if i >= len(market.ClobTokenIDs) {
+				continue
+			}
+
+			tokenID := market.ClobTokenIDs[i]
+			if tokenID == "" {
+				continue
+			}
+
+			tasks = append(tasks, fetchTask{
+				market:     market,
+				outcomeIndex: i,
+				tokenID:    tokenID,
+			})
+		}
+	}
+
+	type fetchResult struct {
+		success    bool
+		points     int
+		err        error
+		taskIndex  int
+	}
+
+	taskChan := make(chan fetchTask, len(tasks))
+	resultChan := make(chan fetchResult, len(tasks))
+
+	var wg sync.WaitGroup
+
+	for w := 0; w < historyWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range taskChan {
+				result := fetchResult{taskIndex: -1}
+
+				if historySkipExisting {
+					exists, err := db.HasPriceHistory(task.market.ID, task.market.Outcomes[task.outcomeIndex].Name)
+					if err != nil {
+						result.err = err
+						resultChan <- result
+						continue
+					}
+					if exists {
+						result.success = true
+						resultChan <- result
+						continue
+					}
+				}
+
+				history, err := client.GetPriceHistory(task.tokenID, historyInterval)
+				if err != nil {
+					errStr := err.Error()
+					if !strings.Contains(errStr, "minimum 'fidelity'") {
+						result.err = fmt.Errorf("market %s (token %s): %v", task.market.ID, task.tokenID, err)
+					}
+					resultChan <- result
+					continue
+				}
+
+				var validPoints []providers.PriceHistoryPoint
+				for _, point := range history {
+					timestamp, err := time.Parse(time.RFC3339, point.Timestamp)
+					if err != nil {
+						continue
+					}
+
+					if timestamp.After(cutoffDate) {
+						validPoints = append(validPoints, providers.PriceHistoryPoint{
+							Timestamp:   timestamp,
+							Price:      point.Price,
+							TokenID:    point.TokenID,
+							OrderCount: point.OrderCount,
+						})
+					}
+				}
+
+				if len(validPoints) > 0 {
+					err := db.InsertPriceHistory(task.market.ID, task.market.Outcomes[task.outcomeIndex].Name, validPoints)
+					if err != nil {
+						result.err = fmt.Errorf("inserting %s: %v", task.market.ID, err)
+						resultChan <- result
+						continue
+					}
+				}
+
+				result.success = true
+				result.points = len(validPoints)
+				resultChan <- result
+			}
+		}()
+	}
+
+	for i, task := range tasks {
+		taskChan <- fetchTask{
+			market:     task.market,
+			outcomeIndex: task.outcomeIndex,
+			tokenID:    task.tokenID,
+		}
+		i++
+	}
+	close(taskChan)
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
 	totalMarkets := 0
 	totalHistoryPoints := 0
 	failedMarkets := 0
+	completedTasks := 0
 
-	for _, market := range markets {
+	for result := range resultChan {
+		completedTasks++
 		totalMarkets++
 
+		progress := float64(completedTasks) / float64(len(tasks)) * 100
+		fmt.Printf("\rProgress: [%-50s] %.1f%% (%d/%d)    ",
+			strings.Repeat("=", int(progress/2))+">",
+			progress, completedTasks, len(tasks))
+
+		if !result.success {
+			failedMarkets++
+			continue
+		}
+
+		totalHistoryPoints += result.points
+
+		if completedTasks%10 == 0 {
+			fmt.Printf("\n")
+		}
+	}
+
+	fmt.Println()
+
+	totalMarkets = 0
+	for _, market := range markets {
 		err := db.InsertOrUpdateMarket(
 			market.ID,
 			market.Question,
@@ -634,81 +788,19 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 			len(market.Outcomes),
 		)
 		if err != nil {
-			failedMarkets++
 			fmt.Printf("Error inserting market %s: %v\n", market.ID, err)
 			continue
 		}
 
-		for i, outcome := range market.Outcomes {
-			questionShort := market.Question
-			if len(questionShort) > 30 {
-				questionShort = questionShort[:30]
-			}
-			fmt.Printf("Fetching price history for %s - %s...\n", questionShort, outcome.Name)
-
-			if i >= len(market.ClobTokenIDs) {
-				fmt.Printf("No token ID for %s - %s\n", questionShort, outcome.Name)
-				continue
-			}
-
-			tokenID := market.ClobTokenIDs[i]
-			if tokenID == "" {
-				fmt.Printf("Empty token ID for %s - %s\n", questionShort, outcome.Name)
-				continue
-			}
-
-			history, err := client.GetPriceHistory(tokenID, historyInterval)
-			if err != nil {
-				errStr := err.Error()
-				if strings.Contains(errStr, "minimum 'fidelity'") {
-				} else {
-					fmt.Printf("Error fetching price history for market %s (token %s): %v\n", market.ID, tokenID, err)
-				}
-				continue
-			}
-
-			var validPoints []providers.PriceHistoryPoint
-			for _, point := range history {
-				timestamp, err := time.Parse(time.RFC3339, point.Timestamp)
-				if err != nil {
-					continue
-				}
-
-				if timestamp.After(cutoffDate) {
-					validPoints = append(validPoints, providers.PriceHistoryPoint{
-						Timestamp:   timestamp,
-						Price:      point.Price,
-						TokenID:    point.TokenID,
-						OrderCount: point.OrderCount,
-					})
-				}
-			}
-
-			if len(validPoints) == 0 {
-				fmt.Printf("No valid price points for %s - %s (before cutoff)\n", market.Question[:30], outcome.Name)
-				continue
-			}
-
-			err = db.InsertPriceHistory(market.ID, outcome.Name, validPoints)
-			if err != nil {
-				fmt.Printf("Error inserting price history for %s - %s: %v\n", market.ID, outcome.Name, err)
-				continue
-			}
-
-			totalHistoryPoints += len(validPoints)
-		}
-
-		if totalMarkets%10 == 0 {
-			fmt.Printf("Processed %d/%d markets...\n", totalMarkets, historyLimit)
-		}
+		totalMarkets++
 	}
 
 	fmt.Printf("\nSummary:\n")
 	fmt.Printf("  Total markets: %d\n", totalMarkets)
-	fmt.Printf("  Failed markets: %d\n", failedMarkets)
+	fmt.Printf("  Failed tasks: %d\n", failedMarkets)
 	fmt.Printf("  Total history points: %d\n", totalHistoryPoints)
 	fmt.Printf("  Data saved to: %s\n", dbPath)
-	
+
 	return nil
 }
 

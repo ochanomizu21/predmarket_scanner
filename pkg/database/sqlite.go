@@ -328,6 +328,19 @@ func (d *DB) GetOrderBookLevels(snapshotID int64, tokenID, side string) ([]provi
 	return levels, nil
 }
 
+func (d *DB) HasPriceHistory(marketID, outcomeName string) (bool, error) {
+	var count int
+	err := d.QueryRow(`
+		SELECT COUNT(*)
+		FROM price_history
+		WHERE market_id = ? AND outcome_name = ?
+	`, marketID, outcomeName).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (d *DB) InsertPriceHistory(marketID, outcomeName string, historyPoints []providers.PriceHistoryPoint) error {
 	tx, err := d.Begin()
 	if err != nil {
