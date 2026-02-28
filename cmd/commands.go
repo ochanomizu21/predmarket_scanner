@@ -31,6 +31,9 @@ var (
 	exportOutput    string
 	recordInterval  int
 	recordMaxMarkets int
+	recordOffset     int
+	recordStartRank  int
+	recordEndRank    int
 	historicalMode  bool
 	historicalTime  string
 	timeRange      string
@@ -38,8 +41,14 @@ var (
 	historyLimit   int
 	historyMaxDays int
 	historyInterval string
+	historyOffset    int
+	historyStartRank int
+	historyEndRank   int
 	recordIncludeOrderBook bool
 	recordOrderBookLevels  int
+	fetchOffset    int
+	fetchStartRank int
+	fetchEndRank   int
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -55,6 +64,9 @@ func init() {
 	FetchMarketsCmd.Flags().IntVar(&fetchMinOutcomes, "min-outcomes", 0, "Minimum number of outcomes")
 	FetchMarketsCmd.Flags().IntVar(&fetchMaxOutcomes, "max-outcomes", 0, "Maximum number of outcomes")
 	FetchMarketsCmd.Flags().BoolVar(&fetchIncludeClosed, "closed", false, "Include closed/resolved markets")
+	FetchMarketsCmd.Flags().IntVar(&fetchOffset, "offset", 0, "Skip first N markets (by liquidity)")
+	FetchMarketsCmd.Flags().IntVar(&fetchStartRank, "start-rank", 0, "Start rank (1-based, inclusive)")
+	FetchMarketsCmd.Flags().IntVar(&fetchEndRank, "end-rank", 0, "End rank (inclusive, 0 = unlimited)")
 	ScanCmd.Flags().Float64VarP(&minProfit, "min-profit", "p", 0.001, "Minimum profit threshold")
 	ScanCmd.Flags().IntVarP(&scanLimit, "limit", "l", 100, "Maximum number of opportunities to display")
 	ScanCmd.Flags().IntVar(&scanMaxMarkets, "max-markets", 0, "Maximum number of markets to fetch (0 = all)")
@@ -69,15 +81,35 @@ func init() {
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
 	RecordCmd.Flags().IntVarP(&recordInterval, "interval", "i", 60, "Recording interval in seconds")
 	RecordCmd.Flags().IntVar(&recordMaxMarkets, "max-markets", 500, "Maximum number of markets to record")
+	RecordCmd.Flags().IntVar(&recordOffset, "offset", 0, "Skip first N markets (by liquidity)")
+	RecordCmd.Flags().IntVar(&recordStartRank, "start-rank", 0, "Start rank (1-based, inclusive)")
+	RecordCmd.Flags().IntVar(&recordEndRank, "end-rank", 0, "End rank (inclusive, 0 = unlimited)")
 	RecordCmd.Flags().BoolVar(&recordIncludeOrderBook, "order-book", true, "Include full order book data (uses more API calls)")
 	RecordCmd.Flags().IntVar(&recordOrderBookLevels, "order-book-levels", 10, "Number of order book levels to record per side")
 	FetchHistoryCmd.Flags().IntVar(&historyLimit, "limit", 100, "Maximum number of markets to fetch history for")
 	FetchHistoryCmd.Flags().IntVar(&historyMaxDays, "max-days", 30, "Maximum number of days of history to fetch")
 	FetchHistoryCmd.Flags().StringVar(&historyInterval, "interval", "1d", "Price history interval (1m, 1h, 6h, 1d)")
+	FetchHistoryCmd.Flags().IntVar(&historyOffset, "offset", 0, "Skip first N markets (by liquidity)")
+	FetchHistoryCmd.Flags().IntVar(&historyStartRank, "start-rank", 0, "Start rank (1-based, inclusive)")
+	FetchHistoryCmd.Flags().IntVar(&historyEndRank, "end-rank", 0, "End rank (inclusive, 0 = unlimited)")
 }
 
 func runFetchMarkets(cmd *cobra.Command, args []string) error {
 	fmt.Println("Fetching markets from Polymarket...")
+
+	offset := fetchOffset
+	limit := fetchMaxMarkets
+
+	if fetchStartRank > 0 {
+		offset = fetchStartRank - 1
+		if fetchEndRank > 0 {
+			limit = fetchEndRank - fetchStartRank + 1
+		}
+	}
+
+	if offset > 0 || limit > 0 {
+		fmt.Printf("Fetching markets: offset=%d, limit=%d\n", offset, limit)
+	}
 
 	if fetchMinOutcomes > 0 || fetchMaxOutcomes > 0 {
 		filterStr := ""
@@ -92,7 +124,7 @@ func runFetchMarkets(cmd *cobra.Command, args []string) error {
 	}
 
 	client := clients.NewPolymarketClient()
-	markets, err := client.FetchMarketsFilter(fetchMaxMarkets, fetchMinOutcomes, fetchMaxOutcomes, fetchIncludeClosed)
+	markets, err := client.FetchMarketsFilterOffset(limit, offset, fetchMinOutcomes, fetchMaxOutcomes, fetchIncludeClosed)
 	if err != nil {
 		return fmt.Errorf("fetching markets: %w", err)
 	}
@@ -302,6 +334,16 @@ func runExport(cmd *cobra.Command, args []string) error {
 func runRecord(cmd *cobra.Command, args []string) error {
 	fmt.Println("Starting historical data recording daemon...")
 
+	offset := recordOffset
+	limit := recordMaxMarkets
+
+	if recordStartRank > 0 {
+		offset = recordStartRank - 1
+		if recordEndRank > 0 {
+			limit = recordEndRank - recordStartRank + 1
+		}
+	}
+
 	db, err := database.Open("data/history.db")
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
@@ -310,7 +352,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Recording to data/history.db\n")
 	fmt.Printf("Recording interval: %d seconds\n", recordInterval)
-	fmt.Printf("Max markets to record: %d\n", recordMaxMarkets)
+	fmt.Printf("Recording markets: offset=%d, limit=%d\n", offset, limit)
 	fmt.Printf("Order book recording: %v (max %d levels per side)\n", recordIncludeOrderBook, recordOrderBookLevels)
 	fmt.Println("Press Ctrl+C to stop recording...")
 
@@ -323,7 +365,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		case <-ticker.C:
 			fmt.Printf("\n[%s] Fetching markets...\n", time.Now().Format(time.RFC3339))
 
-			markets, err := client.FetchMarketsFilter(recordMaxMarkets, 0, 0, false)
+			markets, err := client.FetchMarketsFilterOffset(limit, offset, 0, 0, false)
 			if err != nil {
 				fmt.Printf("Error fetching markets: %v\n", err)
 				continue
@@ -415,8 +457,22 @@ func runRecord(cmd *cobra.Command, args []string) error {
 func runFetchHistory(cmd *cobra.Command, args []string) error {
 	fmt.Println("Fetching markets from Polymarket...")
 
+	offset := historyOffset
+	limit := historyLimit
+
+	if historyStartRank > 0 {
+		offset = historyStartRank - 1
+		if historyEndRank > 0 {
+			limit = historyEndRank - historyStartRank + 1
+		}
+	}
+
+	if offset > 0 || limit > 0 {
+		fmt.Printf("Fetching markets: offset=%d, limit=%d\n", offset, limit)
+	}
+
 	client := clients.NewPolymarketClient()
-	markets, err := client.FetchMarketsFilter(historyLimit, 0, 0, false)
+	markets, err := client.FetchMarketsFilterOffset(limit, offset, 0, 0, false)
 	if err != nil {
 		return fmt.Errorf("fetching markets: %w", err)
 	}

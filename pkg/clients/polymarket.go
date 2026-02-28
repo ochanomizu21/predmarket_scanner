@@ -89,7 +89,11 @@ func (c *PolymarketClient) FetchMarkets(limit int) ([]types.Market, error) {
 }
 
 func (c *PolymarketClient) FetchMarketsFilter(limit, minOutcomes, maxOutcomes int, includeClosed bool) ([]types.Market, error) {
-	gammaMarkets, err := c.fetchGammaMarketsWithLimit(limit, includeClosed)
+	return c.FetchMarketsFilterOffset(limit, 0, minOutcomes, maxOutcomes, includeClosed)
+}
+
+func (c *PolymarketClient) FetchMarketsFilterOffset(limit, offset, minOutcomes, maxOutcomes int, includeClosed bool) ([]types.Market, error) {
+	gammaMarkets, err := c.fetchGammaMarketsWithLimitOffset(limit, offset, includeClosed)
 	if err != nil {
 		return nil, fmt.Errorf("fetching gamma markets: %w", err)
 	}
@@ -124,9 +128,12 @@ func (c *PolymarketClient) fetchGammaMarkets(includeClosed bool) ([]GammaMarket,
 }
 
 func (c *PolymarketClient) fetchGammaMarketsWithLimit(maxMarkets int, includeClosed bool) ([]GammaMarket, error) {
+	return c.fetchGammaMarketsWithLimitOffset(maxMarkets, 0, includeClosed)
+}
+
+func (c *PolymarketClient) fetchGammaMarketsWithLimitOffset(maxMarkets, offset int, includeClosed bool) ([]GammaMarket, error) {
 	var allMarkets []GammaMarket
-	offset := 0
-	limit := 500
+	fetchLimit := 500
 
 	for {
 		if maxMarkets > 0 && len(allMarkets) >= maxMarkets {
@@ -137,7 +144,7 @@ func (c *PolymarketClient) fetchGammaMarketsWithLimit(maxMarkets int, includeClo
 		if !includeClosed {
 			closedParam = "false"
 		}
-		url := fmt.Sprintf("%s/markets?limit=%d&offset=%d&closed=%s", gammaAPIBase, limit, offset, closedParam)
+		url := fmt.Sprintf("%s/markets?limit=%d&offset=%d&closed=%s", gammaAPIBase, fetchLimit, offset, closedParam)
 
 		resp, err := c.httpClient.Get(url)
 		if err != nil {
@@ -165,11 +172,11 @@ func (c *PolymarketClient) fetchGammaMarketsWithLimit(maxMarkets int, includeClo
 
 		allMarkets = append(allMarkets, marketsResponse...)
 
-		if len(marketsResponse) < limit {
+		if len(marketsResponse) < fetchLimit {
 			break
 		}
 
-		offset += limit
+		offset += fetchLimit
 	}
 
 	if maxMarkets > 0 && len(allMarkets) > maxMarkets {

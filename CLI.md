@@ -37,6 +37,9 @@ predmarket-scanner fetch-markets [flags]
 | `-m, --max-markets` | int | 0 (all) | Maximum number of markets to fetch |
 | `--min-outcomes` | int | 0 | Minimum number of outcomes (0 = no minimum) |
 | `--max-outcomes` | int | 0 | Maximum number of outcomes (0 = no maximum) |
+| `--offset` | int | 0 | Skip first N markets (by liquidity) |
+| `--start-rank` | int | 0 | Start rank (1-based, inclusive) |
+| `--end-rank` | int | 0 | End rank (inclusive, 0 = unlimited) |
 
 ### Examples
 
@@ -47,8 +50,11 @@ predmarket-scanner fetch-markets
 # Display first 5 markets, but only fetch up to 100
 predmarket-scanner fetch-markets --limit 5 --max-markets 100
 
-# Fetch all markets (approximately 34K) and display first 20
-predmarket-scanner fetch-markets --limit 20
+# Fetch markets 101-200 (by liquidity ranking)
+predmarket-scanner fetch-markets --start-rank 101 --end-rank 200
+
+# Skip first 1000 markets, fetch next 500
+predmarket-scanner fetch-markets --offset 1000 --max-markets 500
 
 # Filter for binary markets (exactly 2 outcomes)
 predmarket-scanner fetch-markets --min-outcomes 2 --max-outcomes 2
@@ -79,6 +85,9 @@ predmarket-scanner fetch-history [flags]
 | `--limit` | int | 100 | Maximum number of markets to fetch history for |
 | `--max-days` | int | 30 | Maximum number of days of history to fetch |
 | `--interval` | string | 1d | Price history interval: `1m`, `1h`, `6h`, `1d` |
+| `--offset` | int | 0 | Skip first N markets (by liquidity) |
+| `--start-rank` | int | 0 | Start rank (1-based, inclusive) |
+| `--end-rank` | int | 0 | End rank (inclusive, 0 = unlimited) |
 | `--db` | string | data/history.db | Path to SQLite database |
 
 ### Examples
@@ -89,6 +98,9 @@ predmarket-scanner fetch-history
 
 # Fetch hourly price history for last 7 days
 predmarket-scanner fetch-history --interval 1h --max-days 7
+
+# Fetch markets 101-200 (by liquidity ranking)
+predmarket-scanner fetch-history --start-rank 101 --end-rank 200
 
 # Fetch minute-level history for last day
 predmarket-scanner fetch-history --interval 1m --max-days 1
@@ -256,6 +268,9 @@ predmarket-scanner record [flags]
 |------|------|---------|-------------|
 | `-i, --interval` | int | 60 | Recording interval in seconds |
 | `--max-markets` | int | 500 | Maximum number of markets to record |
+| `--offset` | int | 0 | Skip first N markets (by liquidity) |
+| `--start-rank` | int | 0 | Start rank (1-based, inclusive) |
+| `--end-rank` | int | 0 | End rank (inclusive, 0 = unlimited) |
 | `--order-book` | bool | true | Include full order book data |
 | `--order-book-levels` | int | 10 | Number of order book levels per side (1-20) |
 
@@ -273,6 +288,9 @@ predmarket-scanner record --max-markets 100
 
 # Record every 30 seconds with 200 markets
 predmarket-scanner record --interval 30 --max-markets 200
+
+# Record markets 101-500 (by liquidity ranking)
+predmarket-scanner record --start-rank 101 --end-rank 500
 
 # Record prices only (no order book, uses fewer API calls)
 predmarket-scanner record --order-book=false
