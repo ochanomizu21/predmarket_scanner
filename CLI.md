@@ -78,7 +78,7 @@ predmarket-scanner fetch-history [flags]
 |------|------|---------|-------------|
 | `--limit` | int | 100 | Maximum number of markets to fetch history for |
 | `--max-days` | int | 30 | Maximum number of days of history to fetch |
-| `--interval` | string | 1d | Price history interval: `1m`, `1h`, `1d`, `max` |
+| `--interval` | string | 1d | Price history interval: `1m`, `1h`, `6h`, `1d` |
 | `--db` | string | data/history.db | Path to SQLite database |
 
 ### Examples

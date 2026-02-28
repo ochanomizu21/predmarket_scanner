@@ -69,7 +69,7 @@ func init() {
 	RecordCmd.Flags().IntVar(&recordMaxMarkets, "max-markets", 500, "Maximum number of markets to record")
 	FetchHistoryCmd.Flags().IntVar(&historyLimit, "limit", 100, "Maximum number of markets to fetch history for")
 	FetchHistoryCmd.Flags().IntVar(&historyMaxDays, "max-days", 30, "Maximum number of days of history to fetch")
-	FetchHistoryCmd.Flags().StringVar(&historyInterval, "interval", "1d", "Price history interval (1m, 1h, 1d, max)")
+	FetchHistoryCmd.Flags().StringVar(&historyInterval, "interval", "1d", "Price history interval (1m, 1h, 6h, 1d)")
 }
 
 func runFetchMarkets(cmd *cobra.Command, args []string) error {
