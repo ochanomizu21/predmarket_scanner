@@ -441,17 +441,26 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 		}
 
 		for i, outcome := range market.Outcomes {
-			fmt.Printf("Fetching price history for %s - %s...\n", market.Question[:30], outcome.Name)
+			questionShort := market.Question
+			if len(questionShort) > 30 {
+				questionShort = questionShort[:30]
+			}
+			fmt.Printf("Fetching price history for %s - %s...\n", questionShort, outcome.Name)
 
 			if i >= len(market.ClobTokenIDs) {
-				fmt.Printf("No token ID for %s - %s\n", market.Question[:30], outcome.Name)
+				fmt.Printf("No token ID for %s - %s\n", questionShort, outcome.Name)
 				continue
 			}
 
 			tokenID := market.ClobTokenIDs[i]
+			if tokenID == "" {
+				fmt.Printf("Empty token ID for %s - %s\n", questionShort, outcome.Name)
+				continue
+			}
+
 			history, err := client.GetPriceHistory(tokenID, historyInterval)
 			if err != nil {
-				fmt.Printf("Error fetching price history for market %s: %v\n", market.ID, err)
+				fmt.Printf("Error fetching price history for market %s (token %s): %v\n", market.ID, tokenID, err)
 				continue
 			}
 
