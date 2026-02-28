@@ -460,7 +460,11 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 
 			history, err := client.GetPriceHistory(tokenID, historyInterval)
 			if err != nil {
-				fmt.Printf("Error fetching price history for market %s (token %s): %v\n", market.ID, tokenID, err)
+				errStr := err.Error()
+				if strings.Contains(errStr, "minimum 'fidelity'") {
+				} else {
+					fmt.Printf("Error fetching price history for market %s (token %s): %v\n", market.ID, tokenID, err)
+				}
 				continue
 			}
 
