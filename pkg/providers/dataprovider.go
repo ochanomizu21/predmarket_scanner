@@ -55,18 +55,49 @@ type DataProvider interface {
 	FetchOrderBooks(tokenIDs []string) (map[string]clients.OrderBook, error)
 }
 
-type LiveDataProvider struct {
-	client *clients.PolymarketClient
+type Database interface {
+	GetLatestSnapshot(marketID string, before time.Time) (*SnapshotData, error)
+	GetLatestSnapshotByTokenID(tokenID string, before time.Time) (*SnapshotData, error)
+	GetSnapshotData(snapshotID int64) (*SnapshotDetail, error)
+	GetOrderBookLevels(snapshotID int64, tokenID, side string) ([]OrderBookLevel, error)
+	FetchMarketsAtTime(targetTime time.Time, maxMarkets, offset int) ([]MarketData, error)
+	GetTimestampsInRange(startTime, endTime time.Time) ([]time.Time, error)
 }
 
-func NewLiveDataProvider() *LiveDataProvider {
+type LiveDataProvider struct {
+	client *clients.PolymarketClient
+	offset int
+	limit  int
+}
+
+func NewLiveDataProvider(offset, limit int) *LiveDataProvider {
 	return &LiveDataProvider{
 		client: clients.NewPolymarketClient(),
+		offset: offset,
+		limit:  limit,
 	}
 }
 
 func (p *LiveDataProvider) FetchMarkets(maxMarkets int) ([]types.Market, error) {
-	return p.client.FetchMarkets(maxMarkets)
+	markets, err := p.client.FetchMarkets(maxMarkets)
+	if err != nil {
+		return nil, err
+	}
+
+	if p.offset > 0 || p.limit > 0 {
+		if p.offset >= len(markets) {
+			return []types.Market{}, nil
+		}
+
+		end := p.offset + p.limit
+		if end > len(markets) || p.limit == 0 {
+			end = len(markets)
+		}
+
+		return markets[p.offset:end], nil
+	}
+
+	return markets, nil
 }
 
 func (p *LiveDataProvider) FetchOrderBooks(tokenIDs []string) (map[string]clients.OrderBook, error) {
@@ -76,26 +107,19 @@ func (p *LiveDataProvider) FetchOrderBooks(tokenIDs []string) (map[string]client
 type HistoricalDataProvider struct {
 	db         Database
 	targetTime time.Time
+	offset     int
 }
 
-type Database interface {
-	GetLatestSnapshot(marketID string, before time.Time) (*SnapshotData, error)
-	GetLatestSnapshotByTokenID(tokenID string, before time.Time) (*SnapshotData, error)
-	GetSnapshotData(snapshotID int64) (*SnapshotDetail, error)
-	GetOrderBookLevels(snapshotID int64, tokenID, side string) ([]OrderBookLevel, error)
-	FetchMarketsAtTime(targetTime time.Time, maxMarkets int) ([]MarketData, error)
-	GetTimestampsInRange(startTime, endTime time.Time) ([]time.Time, error)
-}
-
-func NewHistoricalDataProvider(db Database, targetTime time.Time) *HistoricalDataProvider {
+func NewHistoricalDataProvider(db Database, targetTime time.Time, offset int) *HistoricalDataProvider {
 	return &HistoricalDataProvider{
 		db:         db,
 		targetTime: targetTime,
+		offset:     offset,
 	}
 }
 
 func (p *HistoricalDataProvider) FetchMarkets(maxMarkets int) ([]types.Market, error) {
-	marketData, err := p.db.FetchMarketsAtTime(p.targetTime, maxMarkets)
+	marketData, err := p.db.FetchMarketsAtTime(p.targetTime, maxMarkets, p.offset)
 	if err != nil {
 		return nil, err
 	}

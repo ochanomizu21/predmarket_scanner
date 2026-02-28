@@ -426,17 +426,17 @@ type OutcomeData struct {
 	BestAsk float64
 }
 
-func (d *DB) FetchMarketsAtTime(targetTime time.Time, maxMarkets int) ([]providers.MarketData, error) {
+func (d *DB) FetchMarketsAtTime(targetTime time.Time, maxMarkets, offset int) ([]providers.MarketData, error) {
 	query := `
 		SELECT DISTINCT m.id, m.question, m.end_time, m.liquidity, m.volume
 		FROM markets m
 		JOIN snapshots s ON s.market_id = m.id
-		WHERE s.timestamp <= ?
+		WHERE datetime(s.timestamp) <= datetime(?)
 		ORDER BY m.liquidity DESC
-		LIMIT ?
+		LIMIT ? OFFSET ?
 	`
 
-	rows, err := d.Query(query, targetTime.Format(time.RFC3339), maxMarkets)
+	rows, err := d.Query(query, targetTime.Format("2006-01-02 15:04:05"), maxMarkets, offset)
 	if err != nil {
 		return nil, err
 	}

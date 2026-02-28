@@ -24,6 +24,9 @@ var (
 	minProfit       float64
 	scanLimit       int
 	scanMaxMarkets  int
+	scanOffset      int
+	scanStartRank   int
+	scanEndRank     int
 	executionSize   float64
 	maxSlippage     float64
 	strategyType    string
@@ -70,6 +73,9 @@ func init() {
 	ScanCmd.Flags().Float64VarP(&minProfit, "min-profit", "p", 0.001, "Minimum profit threshold")
 	ScanCmd.Flags().IntVarP(&scanLimit, "limit", "l", 100, "Maximum number of opportunities to display")
 	ScanCmd.Flags().IntVar(&scanMaxMarkets, "max-markets", 0, "Maximum number of markets to fetch (0 = all)")
+	ScanCmd.Flags().IntVar(&scanOffset, "offset", 0, "Skip first N markets (by liquidity)")
+	ScanCmd.Flags().IntVar(&scanStartRank, "start-rank", 0, "Start rank (1-based, inclusive)")
+	ScanCmd.Flags().IntVar(&scanEndRank, "end-rank", 0, "End rank (inclusive, 0 = unlimited)")
 	ScanCmd.Flags().Float64VarP(&executionSize, "size", "s", 1000, "Execution size in USDC")
 	ScanCmd.Flags().Float64Var(&maxSlippage, "max-slippage", 5.0, "Maximum slippage in percent")
 	ScanCmd.Flags().StringVar(&strategyType, "strategy", "all", "Strategy to use (all, dutch_book, multi_outcome)")
@@ -228,12 +234,26 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 			fmt.Printf("Found %d timestamps to scan\n", len(timestamps))
 
+			offset := scanOffset
+			limit := scanMaxMarkets
+
+			if scanStartRank > 0 {
+				offset = scanStartRank - 1
+				if scanEndRank > 0 {
+					limit = scanEndRank - scanStartRank + 1
+				}
+			}
+
+			if offset > 0 || limit > 0 {
+				fmt.Printf("Scanning markets: offset=%d, limit=%d\n", offset, limit)
+			}
+
 			var allOpportunities []types.ArbitrageOpportunity
 
 			for i, ts := range timestamps {
 				fmt.Printf("\n[%d/%d] Scanning at %s...\n", i+1, len(timestamps), ts.Format("2006-01-02 15:04:05"))
 
-				provider = providers.NewHistoricalDataProvider(db, ts)
+				provider = providers.NewHistoricalDataProvider(db, ts, offset)
 				markets, err := provider.FetchMarkets(scanMaxMarkets)
 				if err != nil {
 					fmt.Printf("Error fetching markets at %s: %v\n", ts.Format("2006-01-02 15:04:05"), err)
@@ -285,11 +305,41 @@ func runScan(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("parsing time: %w", err)
 			}
-			provider = providers.NewHistoricalDataProvider(db, targetTime)
+
+			offset := scanOffset
+			limit := scanMaxMarkets
+
+			if scanStartRank > 0 {
+				offset = scanStartRank - 1
+				if scanEndRank > 0 {
+					limit = scanEndRank - scanStartRank + 1
+				}
+			}
+
+			if offset > 0 || limit > 0 {
+				fmt.Printf("Scanning markets: offset=%d, limit=%d\n", offset, limit)
+			}
+
+			provider = providers.NewHistoricalDataProvider(db, targetTime, offset)
 		}
 	} else {
 		fmt.Println("Fetching markets from Polymarket...")
-		provider = providers.NewLiveDataProvider()
+
+		offset := scanOffset
+		limit := scanMaxMarkets
+
+		if scanStartRank > 0 {
+			offset = scanStartRank - 1
+			if scanEndRank > 0 {
+				limit = scanEndRank - scanStartRank + 1
+			}
+		}
+
+		if offset > 0 || limit > 0 {
+			fmt.Printf("Scanning markets: offset=%d, limit=%d\n", offset, limit)
+		}
+
+		provider = providers.NewLiveDataProvider(offset, limit)
 	}
 
 	markets, err := provider.FetchMarkets(scanMaxMarkets)
