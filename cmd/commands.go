@@ -83,8 +83,8 @@ func init() {
 	ScanCmd.Flags().Float64Var(&maxSlippage, "max-slippage", 5.0, "Maximum slippage in percent")
 	ScanCmd.Flags().StringVar(&strategyType, "strategy", "all", "Strategy to use (all, dutch_book, multi_outcome)")
 	ScanCmd.Flags().BoolVar(&historicalMode, "historical", false, "Enable historical backtesting mode")
-	ScanCmd.Flags().StringVar(&historicalTime, "time", "", "Target historical timestamp (YYYY-MM-DD HH:MM:SS)")
-	ScanCmd.Flags().StringVar(&timeRange, "time-range", "", "Time range for historical scanning (start,end)")
+	ScanCmd.Flags().StringVar(&historicalTime, "time", "", "Target historical timestamp (RFC3339 format, e.g., 2026-02-28T00:00:00+01:00)")
+	ScanCmd.Flags().StringVar(&timeRange, "time-range", "", "Time range for historical scanning (RFC3339 start,end)")
 	ScanCmd.Flags().StringVar(&dbPath, "db", "data/history.db", "Path to SQLite database for historical data")
 	ExportCmd.Flags().StringVarP(&exportFormat, "format", "f", "json", "Export format (json or csv)")
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
@@ -215,12 +215,12 @@ func runScan(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("invalid time-range format, expected 'start,end'")
 			}
 
-			startTime, err := time.Parse("2006-01-02 15:04:05", parts[0])
+			startTime, err := time.Parse(time.RFC3339, parts[0])
 			if err != nil {
 				return fmt.Errorf("parsing start time: %w", err)
 			}
 
-			endTime, err := time.Parse("2006-01-02 15:04:05", parts[1])
+			endTime, err := time.Parse(time.RFC3339, parts[1])
 			if err != nil {
 				return fmt.Errorf("parsing end time: %w", err)
 			}
@@ -306,7 +306,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		if historicalTime != "" {
 			fmt.Printf("Fetching markets from historical data at %s...\n", historicalTime)
 
-			targetTime, err := time.Parse("2006-01-02 15:04:05", historicalTime)
+			targetTime, err := time.Parse(time.RFC3339, historicalTime)
 			if err != nil {
 				return fmt.Errorf("parsing time: %w", err)
 			}
