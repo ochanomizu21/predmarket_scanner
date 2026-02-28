@@ -357,13 +357,9 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	fmt.Println("Press Ctrl+C to stop recording...")
 
 	client := clients.NewPolymarketClient()
-	ticker := time.NewTicker(time.Duration(recordInterval) * time.Second)
-	defer ticker.Stop()
 
 	for {
-		select {
-		case <-ticker.C:
-			fmt.Printf("\n[%s] Fetching markets...\n", time.Now().Format(time.RFC3339))
+		fmt.Printf("\n[%s] Fetching markets...\n", time.Now().Format(time.RFC3339))
 
 			markets, err := client.FetchMarketsFilterOffset(limit, offset, 0, 0, false)
 			if err != nil {
@@ -447,9 +443,11 @@ func runRecord(cmd *cobra.Command, args []string) error {
 				}
 
 			recorded++
-			}
 
 			fmt.Printf("Recorded %d market snapshots\n", recorded)
+
+			fmt.Printf("Waiting %d seconds before next recording...\n", recordInterval)
+			time.Sleep(time.Duration(recordInterval) * time.Second)
 		}
 	}
 }
