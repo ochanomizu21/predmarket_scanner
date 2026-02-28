@@ -72,9 +72,25 @@ func (d *DB) createSchema() error {
 		FOREIGN KEY (snapshot_id) REFERENCES snapshots(id)
 	);
 
+	CREATE TABLE IF NOT EXISTS price_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		market_id TEXT NOT NULL,
+		outcome_name TEXT NOT NULL,
+		timestamp DATETIME NOT NULL,
+		price REAL NOT NULL,
+		token_id TEXT,
+		order_count INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (market_id) REFERENCES markets(id),
+		UNIQUE(market_id, outcome_name, timestamp)
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_snapshots_market_timestamp ON snapshots(market_id, timestamp);
 	CREATE INDEX IF NOT EXISTS idx_order_book_snapshot_outcome ON order_book_levels(snapshot_id, outcome_name);
 	CREATE INDEX IF NOT EXISTS idx_order_book_outcome_side ON order_book_levels(outcome_name, side);
+	CREATE INDEX IF NOT EXISTS idx_price_history_market ON price_history(market_id);
+	CREATE INDEX IF NOT EXISTS idx_price_history_market_outcome ON price_history(market_id, outcome_name);
+	CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp);
 	`
 
 	_, err := d.Exec(schema)
@@ -243,19 +259,86 @@ func (d *DB) GetOrderBookLevels(snapshotID int64, outcomeName, side string) ([]p
 	return levels, nil
 }
 
-func (d *DB) Close() error {
-	return d.DB.Close()
+func (d *DB) InsertPriceHistory(marketID, outcomeName string, historyPoints []providers.PriceHistoryPoint) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO price_history (market_id, outcome_name, timestamp, price, token_id, order_count)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(market_id, outcome_name, timestamp) DO UPDATE SET
+			price = excluded.price,
+			order_count = excluded.order_count
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, point := range historyPoints {
+		_, err := stmt.Exec(
+			marketID,
+			outcomeName,
+			point.Timestamp,
+			point.Price,
+			point.TokenID,
+			point.OrderCount,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
-type OrderBookLevel struct {
-	Price float64
-	Size  float64
-}
+func (d *DB) GetPriceHistory(marketID, outcomeName string, startTime, endTime time.Time) ([]providers.PriceHistoryPoint, error) {
+	query := `
+		SELECT timestamp, price, token_id, order_count
+		FROM price_history
+		WHERE market_id = ? AND outcome_name = ?
+	`
 
-type SnapshotData struct {
-	ID        int64
-	MarketID  string
-	Timestamp time.Time
+	args := []interface{}{marketID, outcomeName}
+
+	if !startTime.IsZero() {
+		query += " AND timestamp >= ?"
+		args = append(args, startTime.Format(time.RFC3339))
+	}
+
+	if !endTime.IsZero() {
+		query += " AND timestamp <= ?"
+		args = append(args, endTime.Format(time.RFC3339))
+	}
+
+	query += " ORDER BY timestamp ASC"
+
+	rows, err := d.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var points []providers.PriceHistoryPoint
+	for rows.Next() {
+		var point providers.PriceHistoryPoint
+		var timestampStr string
+		if err := rows.Scan(&timestampStr, &point.Price, &point.TokenID, &point.OrderCount); err != nil {
+			return nil, err
+		}
+
+		point.Timestamp, err = time.Parse(time.RFC3339, timestampStr)
+		if err != nil {
+			return nil, err
+		}
+
+		points = append(points, point)
+	}
+
+	return points, nil
 }
 
 type SnapshotDetail struct {

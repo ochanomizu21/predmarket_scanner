@@ -27,13 +27,14 @@ const (
 )
 
 type Market struct {
-	ID        string     `json:"id"`
-	Question  string     `json:"question"`
-	Platform  Platform   `json:"platform"`
-	Outcomes  []Outcome  `json:"outcomes"`
-	Liquidity float64    `json:"liquidity"`
-	Volume    float64    `json:"volume"`
-	EndTime   *time.Time `json:"end_time,omitempty"`
+	ID          string     `json:"id"`
+	Question    string     `json:"question"`
+	Platform    Platform   `json:"platform"`
+	Outcomes    []Outcome  `json:"outcomes"`
+	Liquidity   float64    `json:"liquidity"`
+	Volume      float64    `json:"volume"`
+	EndTime     *time.Time `json:"end_time,omitempty"`
+	ClobTokenIDs []string  `json:"clob_token_ids,omitempty"`
 }
 
 type Outcome struct {

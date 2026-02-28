@@ -73,6 +73,13 @@ type OrderBook struct {
 	LastTradePrice string       `json:"last_trade_price"`
 }
 
+type PriceHistoryPoint struct {
+	Timestamp   string  `json:"t"`
+	Price      float64 `json:"price"`
+	TokenID    string  `json:"token_id"`
+	OrderCount int     `json:"order_count"`
+}
+
 func (c *PolymarketClient) FetchAllMarkets() ([]types.Market, error) {
 	return c.FetchMarkets(0)
 }
@@ -190,13 +197,14 @@ func (c *PolymarketClient) convertMarket(gammaMarket GammaMarket) (types.Market,
 	}
 
 	return types.Market{
-		ID:        gammaMarket.ID,
-		Question:  gammaMarket.Question,
-		Platform:  types.Polymarket,
-		Outcomes:  outcomes,
-		Liquidity: liquidity,
-		Volume:    volume,
-		EndTime:   endTime,
+		ID:          gammaMarket.ID,
+		Question:    gammaMarket.Question,
+		Platform:    types.Polymarket,
+		Outcomes:    outcomes,
+		Liquidity:   liquidity,
+		Volume:      volume,
+		EndTime:     endTime,
+		ClobTokenIDs: gammaMarket.ClobTokenIDs,
 	}, true
 }
 
@@ -263,4 +271,46 @@ func (c *PolymarketClient) FetchOrderBook(tokenID string) (OrderBook, error) {
 func (c *PolymarketClient) parseHexToUint(hexStr string) (uint64, error) {
 	hexStr = strings.TrimPrefix(hexStr, "0x")
 	return strconv.ParseUint(hexStr, 16, 64)
+}
+
+func (c *PolymarketClient) GetPriceHistory(tokenID string, interval string) ([]PriceHistoryPoint, error) {
+	url := fmt.Sprintf("%s/prices-history?market=%s&interval=%s", clobAPIBase, tokenID, interval)
+
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	var priceHistoryResp struct {
+		History []struct {
+			T int     `json:"t"`
+			P float64 `json:"p"`
+		} `json:"history"`
+	}
+
+	if err := json.Unmarshal(body, &priceHistoryResp); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	}
+
+	var history []PriceHistoryPoint
+	for _, h := range priceHistoryResp.History {
+		history = append(history, PriceHistoryPoint{
+			Timestamp:   time.Unix(int64(h.T), 0).Format(time.RFC3339),
+			Price:       h.P,
+			TokenID:     tokenID,
+			OrderCount:  0,
+		})
+	}
+
+	return history, nil
 }

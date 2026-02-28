@@ -43,6 +43,13 @@ type OrderBookLevel struct {
 	Size  float64
 }
 
+type PriceHistoryPoint struct {
+	Timestamp   time.Time
+	Price      float64
+	TokenID    string
+	OrderCount int
+}
+
 type DataProvider interface {
 	FetchMarkets(maxMarkets int) ([]types.Market, error)
 	FetchOrderBooks(tokenIDs []string) (map[string]clients.OrderBook, error)

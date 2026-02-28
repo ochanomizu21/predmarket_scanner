@@ -35,6 +35,9 @@ var (
 	historicalTime  string
 	timeRange      string
 	dbPath         string
+	historyLimit   int
+	historyMaxDays int
+	historyInterval string
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -64,6 +67,9 @@ func init() {
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
 	RecordCmd.Flags().IntVarP(&recordInterval, "interval", "i", 60, "Recording interval in seconds")
 	RecordCmd.Flags().IntVar(&recordMaxMarkets, "max-markets", 500, "Maximum number of markets to record")
+	FetchHistoryCmd.Flags().IntVar(&historyLimit, "limit", 100, "Maximum number of markets to fetch history for")
+	FetchHistoryCmd.Flags().IntVar(&historyMaxDays, "max-days", 30, "Maximum number of days of history to fetch")
+	FetchHistoryCmd.Flags().StringVar(&historyInterval, "interval", "1d", "Price history interval (1m, 1h, 1d, max)")
 }
 
 func runFetchMarkets(cmd *cobra.Command, args []string) error {
@@ -232,6 +238,13 @@ var RecordCmd = &cobra.Command{
 	RunE:  runRecord,
 }
 
+var FetchHistoryCmd = &cobra.Command{
+	Use:   "fetch-history",
+	Short: "Fetch historical price data",
+	Long:  "Fetch historical price data from Polymarket for markets and store in database",
+	RunE:  runFetchHistory,
+}
+
 func runExport(cmd *cobra.Command, args []string) error {
 	fmt.Println("Fetching markets...")
 
@@ -314,7 +327,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Fetched %d markets\n", len(markets))
 			fmt.Printf("Recording snapshots...\n")
 
-			recorded := 0
+			var recorded int
 			timestamp := time.Now()
 
 			for _, market := range markets {
@@ -378,10 +391,112 @@ func runRecord(cmd *cobra.Command, args []string) error {
 					}
 				}
 
-				recorded++
+			recorded++
 			}
 
 			fmt.Printf("Recorded %d market snapshots\n", recorded)
 		}
 	}
 }
+
+func runFetchHistory(cmd *cobra.Command, args []string) error {
+	fmt.Println("Fetching markets from Polymarket...")
+
+	client := clients.NewPolymarketClient()
+	markets, err := client.FetchMarketsFilter(historyLimit, 0, 0, false)
+	if err != nil {
+		return fmt.Errorf("fetching markets: %w", err)
+	}
+
+	fmt.Printf("Found %d markets\n", len(markets))
+	fmt.Printf("Fetching historical price data for up to %d days...\n", historyMaxDays)
+
+	db, err := database.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	cutoffDate := time.Now().AddDate(0, 0, -historyMaxDays)
+
+	totalMarkets := 0
+	totalHistoryPoints := 0
+	failedMarkets := 0
+
+	for _, market := range markets {
+		totalMarkets++
+
+		err := db.InsertOrUpdateMarket(
+			market.ID,
+			market.Question,
+			market.EndTime,
+			market.Liquidity,
+			market.Volume,
+			len(market.Outcomes),
+		)
+		if err != nil {
+			failedMarkets++
+			fmt.Printf("Error inserting market %s: %v\n", market.ID, err)
+			continue
+		}
+
+		for i, outcome := range market.Outcomes {
+			fmt.Printf("Fetching price history for %s - %s...\n", market.Question[:30], outcome.Name)
+
+			if i >= len(market.ClobTokenIDs) {
+				fmt.Printf("No token ID for %s - %s\n", market.Question[:30], outcome.Name)
+				continue
+			}
+
+			tokenID := market.ClobTokenIDs[i]
+			history, err := client.GetPriceHistory(tokenID, historyInterval)
+			if err != nil {
+				fmt.Printf("Error fetching price history for market %s: %v\n", market.ID, err)
+				continue
+			}
+
+			var validPoints []providers.PriceHistoryPoint
+			for _, point := range history {
+				timestamp, err := time.Parse(time.RFC3339, point.Timestamp)
+				if err != nil {
+					continue
+				}
+
+				if timestamp.After(cutoffDate) {
+					validPoints = append(validPoints, providers.PriceHistoryPoint{
+						Timestamp:   timestamp,
+						Price:      point.Price,
+						TokenID:    point.TokenID,
+						OrderCount: point.OrderCount,
+					})
+				}
+			}
+
+			if len(validPoints) == 0 {
+				fmt.Printf("No valid price points for %s - %s (before cutoff)\n", market.Question[:30], outcome.Name)
+				continue
+			}
+
+			err = db.InsertPriceHistory(market.ID, outcome.Name, validPoints)
+			if err != nil {
+				fmt.Printf("Error inserting price history for %s - %s: %v\n", market.ID, outcome.Name, err)
+				continue
+			}
+
+			totalHistoryPoints += len(validPoints)
+		}
+
+		if totalMarkets%10 == 0 {
+			fmt.Printf("Processed %d/%d markets...\n", totalMarkets, historyLimit)
+		}
+	}
+
+	fmt.Printf("\nSummary:\n")
+	fmt.Printf("  Total markets: %d\n", totalMarkets)
+	fmt.Printf("  Failed markets: %d\n", failedMarkets)
+	fmt.Printf("  Total history points: %d\n", totalHistoryPoints)
+	fmt.Printf("  Data saved to: %s\n", dbPath)
+	
+	return nil
+}
+

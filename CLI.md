@@ -14,6 +14,7 @@ predmarket-scanner [command] [flags]
 - `scan` - Scan for arbitrage opportunities
 - `export` - Export opportunities to file
 - `record` - Record historical market data (daemon)
+- `fetch-history` - Fetch historical price data from Polymarket API
 - `completion` - Generate autocompletion script for your shell
 
 ---
@@ -57,6 +58,43 @@ predmarket-scanner fetch-markets --min-outcomes 3
 
 # Filter for markets with 2-5 outcomes
 predmarket-scanner fetch-markets --min-outcomes 2 --max-outcomes 5
+```
+
+---
+
+## `fetch-history`
+
+Fetch historical price data from Polymarket's CLOB API and store in SQLite.
+
+### Usage
+
+```bash
+predmarket-scanner fetch-history [flags]
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--limit` | int | 100 | Maximum number of markets to fetch history for |
+| `--max-days` | int | 30 | Maximum number of days of history to fetch |
+| `--interval` | string | 1d | Price history interval: `1m`, `1h`, `1d`, `max` |
+| `--db` | string | data/history.db | Path to SQLite database |
+
+### Examples
+
+```bash
+# Fetch 30 days of daily price history for 100 markets (default)
+predmarket-scanner fetch-history
+
+# Fetch hourly price history for last 7 days
+predmarket-scanner fetch-history --interval 1h --max-days 7
+
+# Fetch minute-level history for last day
+predmarket-scanner fetch-history --interval 1m --max-days 1
+
+# Fetch full historical data
+predmarket-scanner fetch-history --interval max
 ```
 
 ---
@@ -313,7 +351,10 @@ predmarket-scanner export --format json --output results
 ### Historical Research
 
 ```bash
-# Start recording data
+# Fetch historical price data from Polymarket API (one-time backfill)
+predmarket-scanner fetch-history --interval 1d --max-days 30
+
+# Start recording live data
 predmarket-scanner record --interval 30 --max-markets 500
 
 # After recording, analyze specific time periods

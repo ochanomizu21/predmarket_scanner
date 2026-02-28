@@ -17,6 +17,7 @@ func main() {
 	rootCmd.AddCommand(ScanCmd)
 	rootCmd.AddCommand(ExportCmd)
 	rootCmd.AddCommand(RecordCmd)
+	rootCmd.AddCommand(FetchHistoryCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)
