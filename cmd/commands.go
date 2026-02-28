@@ -393,7 +393,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 					continue
 				}
 
-				for _, outcome := range market.Outcomes {
+				for i, outcome := range market.Outcomes {
 					err := db.InsertOutcomeSnapshot(snapshotID, outcome.Name, outcome.Price, outcome.Price)
 					if err != nil {
 						fmt.Printf("Error inserting outcome snapshot for market %s: %v\n", market.ID, err)
@@ -401,7 +401,16 @@ func runRecord(cmd *cobra.Command, args []string) error {
 					}
 
 					if recordIncludeOrderBook {
-						book, err := client.FetchOrderBook(outcome.Name)
+						if i >= len(market.ClobTokenIDs) {
+							continue
+						}
+
+						tokenID := market.ClobTokenIDs[i]
+						if tokenID == "" {
+							continue
+						}
+
+						book, err := client.FetchOrderBook(tokenID)
 						if err != nil {
 							continue
 						}
