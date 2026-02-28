@@ -35,3 +35,4 @@ data/*.sqlite
 # OS
 .DS_Store
 Thumbs.db
+predmarket-scanner
