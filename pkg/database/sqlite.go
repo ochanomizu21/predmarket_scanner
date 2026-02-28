@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ochanomizu/predmarket-scanner/pkg/providers"
@@ -66,6 +67,7 @@ func (d *DB) createSchema() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		snapshot_id INTEGER NOT NULL,
 		outcome_name TEXT NOT NULL,
+		token_id TEXT NOT NULL,
 		side TEXT NOT NULL,
 		price REAL NOT NULL,
 		size REAL NOT NULL,
@@ -94,7 +96,16 @@ func (d *DB) createSchema() error {
 	`
 
 	_, err := d.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	_, err = d.Exec(`ALTER TABLE order_book_levels ADD COLUMN token_id TEXT`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return err
+	}
+
+	return nil
 }
 
 func (d *DB) InsertOrUpdateMarket(marketID, question string, endTime *time.Time, liquidity, volume float64, numOutcomes int) error {
@@ -138,7 +149,7 @@ func (d *DB) InsertOutcomeSnapshot(snapshotID int64, outcomeName string, bestBid
 	return err
 }
 
-func (d *DB) InsertOrderBookLevels(snapshotID int64, outcomeName, side string, levels []providers.OrderBookLevel) error {
+func (d *DB) InsertOrderBookLevels(snapshotID int64, outcomeName, tokenID, side string, levels []providers.OrderBookLevel) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -146,8 +157,8 @@ func (d *DB) InsertOrderBookLevels(snapshotID int64, outcomeName, side string, l
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO order_book_levels (snapshot_id, outcome_name, side, price, size)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO order_book_levels (snapshot_id, outcome_name, token_id, side, price, size)
+		VALUES (?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -155,7 +166,7 @@ func (d *DB) InsertOrderBookLevels(snapshotID int64, outcomeName, side string, l
 	defer stmt.Close()
 
 	for _, level := range levels {
-		_, err := stmt.Exec(snapshotID, outcomeName, side, level.Price, level.Size)
+		_, err := stmt.Exec(snapshotID, outcomeName, tokenID, side, level.Price, level.Size)
 		if err != nil {
 			return err
 		}
@@ -176,6 +187,34 @@ func (d *DB) GetLatestSnapshot(marketID string, before time.Time) (*providers.Sn
 	var s providers.SnapshotData
 	var timestampStr string
 	err := d.QueryRow(query, marketID, before.Format(time.RFC3339)).Scan(&s.ID, &s.MarketID, &timestampStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	s.Timestamp, err = time.Parse(time.RFC3339, timestampStr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &s, nil
+}
+
+func (d *DB) GetLatestSnapshotByTokenID(tokenID string, before time.Time) (*providers.SnapshotData, error) {
+	query := `
+		SELECT s.id, s.market_id, s.timestamp
+		FROM snapshots s
+		JOIN order_book_levels obl ON s.id = obl.snapshot_id
+		WHERE obl.token_id = ? AND s.timestamp <= ?
+		ORDER BY s.timestamp DESC
+		LIMIT 1
+	`
+
+	var s providers.SnapshotData
+	var timestampStr string
+	err := d.QueryRow(query, tokenID, before.Format(time.RFC3339)).Scan(&s.ID, &s.MarketID, &timestampStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -232,16 +271,16 @@ func (d *DB) GetSnapshotData(snapshotID int64) (*providers.SnapshotDetail, error
 	return &s, nil
 }
 
-func (d *DB) GetOrderBookLevels(snapshotID int64, outcomeName, side string) ([]providers.OrderBookLevel, error) {
+func (d *DB) GetOrderBookLevels(snapshotID int64, tokenID, side string) ([]providers.OrderBookLevel, error) {
 	query := `
 		SELECT price, size
 		FROM order_book_levels
-		WHERE snapshot_id = ? AND outcome_name = ? AND side = ?
+		WHERE snapshot_id = ? AND token_id = ? AND side = ?
 		ORDER BY CASE WHEN side = 'bid' THEN price END DESC,
 		         CASE WHEN side = 'ask' THEN price END ASC
 	`
 
-	rows, err := d.Query(query, snapshotID, outcomeName, side)
+	rows, err := d.Query(query, snapshotID, tokenID, side)
 	if err != nil {
 		return nil, err
 	}

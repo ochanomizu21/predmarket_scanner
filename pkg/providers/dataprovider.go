@@ -80,8 +80,9 @@ type HistoricalDataProvider struct {
 
 type Database interface {
 	GetLatestSnapshot(marketID string, before time.Time) (*SnapshotData, error)
+	GetLatestSnapshotByTokenID(tokenID string, before time.Time) (*SnapshotData, error)
 	GetSnapshotData(snapshotID int64) (*SnapshotDetail, error)
-	GetOrderBookLevels(snapshotID int64, outcomeName, side string) ([]OrderBookLevel, error)
+	GetOrderBookLevels(snapshotID int64, tokenID, side string) ([]OrderBookLevel, error)
 	FetchMarketsAtTime(targetTime time.Time, maxMarkets int) ([]MarketData, error)
 }
 
@@ -151,7 +152,7 @@ func (p *HistoricalDataProvider) FetchOrderBooks(tokenIDs []string) (map[string]
 	books := make(map[string]clients.OrderBook)
 
 	for _, tokenID := range tokenIDs {
-		snapshot, err := p.db.GetLatestSnapshot(tokenID, p.targetTime)
+		snapshot, err := p.db.GetLatestSnapshotByTokenID(tokenID, p.targetTime)
 		if err != nil {
 			return nil, err
 		}

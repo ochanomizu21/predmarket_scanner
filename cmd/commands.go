@@ -426,7 +426,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 						}
 
 						if len(bidLevels) > 0 {
-							err := db.InsertOrderBookLevels(snapshotID, outcome.Name, "bid", bidLevels)
+							err := db.InsertOrderBookLevels(snapshotID, outcome.Name, tokenID, "bid", bidLevels)
 							if err != nil {
 								fmt.Printf("Error inserting bid levels for market %s: %v\n", market.ID, err)
 							}
@@ -443,7 +443,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 						}
 
 						if len(askLevels) > 0 {
-							err := db.InsertOrderBookLevels(snapshotID, outcome.Name, "ask", askLevels)
+							err := db.InsertOrderBookLevels(snapshotID, outcome.Name, tokenID, "ask", askLevels)
 							if err != nil {
 								fmt.Printf("Error inserting ask levels for market %s: %v\n", market.ID, err)
 							}
