@@ -21,6 +21,18 @@ func FindMultiOutcomeOpportunities(markets []types.Market, executionSize, maxSli
 	return opportunities
 }
 
+func FindMultiOutcomeOpportunitiesNoSlippage(markets []types.Market, minProfit float64) []types.ArbitrageOpportunity {
+	var opportunities []types.ArbitrageOpportunity
+
+	for _, market := range markets {
+		if opp := checkMultiOutcomeNoSlippage(market, minProfit); opp != nil {
+			opportunities = append(opportunities, *opp)
+		}
+	}
+
+	return opportunities
+}
+
 func isMultiOutcomeMarket(market types.Market) bool {
 	if len(market.Outcomes) < 3 {
 		return false
@@ -170,6 +182,55 @@ func CheckMultiOutcomeWithOrderBooks(market types.Market, orderBooks map[string]
 			GuaranteedPayout: float64(len(market.Outcomes)),
 		},
 		SlippageImpact:     totalSlippage,
+		AvailableLiquidity: market.Liquidity,
+	}
+}
+
+func checkMultiOutcomeNoSlippage(market types.Market, minProfit float64) *types.ArbitrageOpportunity {
+	if !isMultiOutcomeMarket(market) {
+		return nil
+	}
+
+	sum := 0.0
+	for _, outcome := range market.Outcomes {
+		sum += outcome.Price
+	}
+
+	if sum >= 1.0 {
+		return nil
+	}
+
+	grossProfit := 1.0 - sum
+	feeCost := fees.CalculatePolymarketFee(grossProfit, market)
+	netProfit := grossProfit - feeCost
+
+	if netProfit < minProfit {
+		return nil
+	}
+
+	legs := make([]types.TradeLeg, len(market.Outcomes))
+	for i, outcome := range market.Outcomes {
+		legs[i] = types.TradeLeg{
+			Outcome: outcome.Name,
+			Side:    types.Bid,
+			Price:   outcome.Price,
+			Size:    1.0,
+		}
+	}
+
+	return &types.ArbitrageOpportunity{
+		Market:             market,
+		Strategy:           types.MultiOutcome,
+		GrossProfit:        grossProfit,
+		NetProfit:          netProfit,
+		FeeCost:            feeCost,
+		Score:              scoring.CalculateScore(market, netProfit),
+		ExecutionPlan: types.ExecutionPlan{
+			Legs:             legs,
+			TotalCost:        sum,
+			GuaranteedPayout: 1.0,
+		},
+		SlippageImpact:     0,
 		AvailableLiquidity: market.Liquidity,
 	}
 }

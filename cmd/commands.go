@@ -16,6 +16,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func skipSlippageStr() string {
+	if skipSlippage {
+		return " (no slippage)"
+	}
+	return ""
+}
+
 var (
 	fetchLimit      int
 	fetchMaxMarkets int
@@ -30,6 +37,7 @@ var (
 	scanEndRank     int
 	executionSize   float64
 	maxSlippage     float64
+	skipSlippage   bool
 	strategyType    string
 	exportFormat    string
 	exportOutput    string
@@ -79,9 +87,10 @@ func init() {
 	ScanCmd.Flags().IntVar(&scanOffset, "offset", 0, "Skip first N markets (by liquidity)")
 	ScanCmd.Flags().IntVar(&scanStartRank, "start-rank", 0, "Start rank (1-based, inclusive)")
 	ScanCmd.Flags().IntVar(&scanEndRank, "end-rank", 0, "End rank (inclusive, 0 = unlimited)")
-	ScanCmd.Flags().Float64VarP(&executionSize, "size", "s", 1000, "Execution size in USDC")
-	ScanCmd.Flags().Float64Var(&maxSlippage, "max-slippage", 5.0, "Maximum slippage in percent")
 	ScanCmd.Flags().StringVar(&strategyType, "strategy", "all", "Strategy to use (all, dutch_book, multi_outcome)")
+	ScanCmd.Flags().Float64Var(&executionSize, "size", 1000, "Execution size in USDC")
+	ScanCmd.Flags().Float64Var(&maxSlippage, "max-slippage", 5.0, "Maximum slippage in percent")
+	ScanCmd.Flags().BoolVar(&skipSlippage, "skip-slippage", false, "Skip order book fetch and slippage calculation (price only)")
 	ScanCmd.Flags().BoolVar(&historicalMode, "historical", false, "Enable historical backtesting mode")
 	ScanCmd.Flags().StringVar(&historicalTime, "time", "", "Target historical timestamp (RFC3339 format, e.g., 2026-02-28T00:00:00+01:00)")
 	ScanCmd.Flags().StringVar(&timeRange, "time-range", "", "Time range for historical scanning (RFC3339 start,end)")
@@ -265,19 +274,33 @@ func runScan(cmd *cobra.Command, args []string) error {
 					continue
 				}
 
-				var opportunities []types.ArbitrageOpportunity
-				switch strategyType {
-				case "dutch_book":
+			var opportunities []types.ArbitrageOpportunity
+			switch strategyType {
+			case "dutch_book":
+				if skipSlippage {
+					opportunities = strategies.FindOpportunitiesNoSlippage(markets, minProfit)
+				} else {
 					opportunities = strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
-				case "multi_outcome":
+				}
+			case "multi_outcome":
+				if skipSlippage {
+					opportunities = strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
+				} else {
 					opportunities = strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
-				case "all":
+				}
+			case "all":
+				if skipSlippage {
+					dutchBookOpps := strategies.FindOpportunitiesNoSlippage(markets, minProfit)
+					multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
+					opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+				} else {
 					dutchBookOpps := strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
 					multiOutcomeOpps := strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
 					opportunities = append(dutchBookOpps, multiOutcomeOpps...)
-				default:
-					return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
 				}
+			default:
+				return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
+			}
 
 				for _, opp := range opportunities {
 					if opp.NetProfit >= minProfit {
@@ -354,20 +377,34 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Found %d markets\n", len(markets))
 
-	fmt.Printf("Scanning for arbitrage opportunities (size: $%.2f, max-slippage: %.2f%%, strategy: %s)...\n",
-		executionSize, maxSlippage, strategyType)
+	fmt.Printf("Scanning for arbitrage opportunities (size: $%.2f, max-slippage: %.2f%%, strategy: %s%s)...\n",
+		executionSize, maxSlippage, strategyType, skipSlippageStr())
 
 	var opportunities []types.ArbitrageOpportunity
 
 	switch strategyType {
 	case "dutch_book":
-		opportunities = strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+		if skipSlippage {
+			opportunities = strategies.FindOpportunitiesNoSlippage(markets, minProfit)
+		} else {
+			opportunities = strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+		}
 	case "multi_outcome":
-		opportunities = strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+		if skipSlippage {
+			opportunities = strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
+		} else {
+			opportunities = strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+		}
 	case "all":
-		dutchBookOpps := strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
-		multiOutcomeOpps := strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
-		opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+		if skipSlippage {
+			dutchBookOpps := strategies.FindOpportunitiesNoSlippage(markets, minProfit)
+			multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
+			opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+		} else {
+			dutchBookOpps := strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+			multiOutcomeOpps := strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+			opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+		}
 	default:
 		return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
 	}

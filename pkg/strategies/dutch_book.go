@@ -69,10 +69,69 @@ func checkDutchBookWithSlippage(market types.Market, executionSize, maxSlippageP
 	}
 
 	grossProfit := 1.0 - sum
-	feeCost := fees.CalculatePolymarketFee(grossProfit, market)
+		feeCost := fees.CalculatePolymarketFee(grossProfit, market)
 	netProfit := grossProfit - feeCost
 
 	if netProfit < 0.001 {
+		return nil
+	}
+
+	return &types.ArbitrageOpportunity{
+		Market:             market,
+		Strategy:           types.DutchBook,
+		GrossProfit:        grossProfit,
+		NetProfit:          netProfit,
+		FeeCost:            feeCost,
+		Score:              scoring.CalculateScore(market, netProfit),
+		ExecutionPlan:      buildExecutionPlan(yesPrice, noPrice),
+		SlippageImpact:     0,
+		YesSlippage:        0,
+		NoSlippage:         0,
+		AvailableLiquidity: market.Liquidity,
+	}
+}
+
+func FindOpportunitiesNoSlippage(markets []types.Market, minProfit float64) []types.ArbitrageOpportunity {
+	var opportunities []types.ArbitrageOpportunity
+
+	for _, market := range markets {
+		if opp := checkDutchBookNoSlippage(market, minProfit); opp != nil {
+			opportunities = append(opportunities, *opp)
+		}
+	}
+
+	return opportunities
+}
+
+func checkDutchBookNoSlippage(market types.Market, minProfit float64) *types.ArbitrageOpportunity {
+	if !isBinaryMarket(market) {
+		return nil
+	}
+
+	var yesPrice, noPrice float64
+	for _, outcome := range market.Outcomes {
+		if outcome.Name == "YES" {
+			yesPrice = outcome.Price
+		}
+		if outcome.Name == "NO" {
+			noPrice = outcome.Price
+		}
+	}
+
+	if yesPrice == 0 || noPrice == 0 {
+		return nil
+	}
+
+	sum := yesPrice + noPrice
+	if sum >= 1.0 {
+		return nil
+	}
+
+	grossProfit := 1.0 - sum
+	feeCost := fees.CalculatePolymarketFee(grossProfit, market)
+	netProfit := grossProfit - feeCost
+
+	if netProfit < minProfit {
 		return nil
 	}
 
