@@ -205,6 +205,13 @@ func runScan(cmd *cobra.Command, args []string) error {
 			}
 
 			fmt.Printf("Scanning historical data from %s to %s...\n", parts[0], parts[1])
+			fmt.Printf("Note: Time-range scanning currently uses start time only. Use scan for each timestamp separately for full range.\n")
+
+			targetTime, err := time.Parse("2006-01-02 15:04:05", parts[0])
+			if err != nil {
+				return fmt.Errorf("parsing start time: %w", err)
+			}
+			provider = providers.NewHistoricalDataProvider(db, targetTime)
 		} else {
 			fmt.Printf("Fetching markets from historical data at %s...\n", historicalTime)
 
