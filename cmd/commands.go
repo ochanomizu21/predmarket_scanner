@@ -204,15 +204,81 @@ func runScan(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("invalid time-range format, expected 'start,end'")
 			}
 
-			fmt.Printf("Scanning historical data from %s to %s...\n", parts[0], parts[1])
-			fmt.Printf("Note: Time-range scanning currently uses start time only. Use scan for each timestamp separately for full range.\n")
-
-			targetTime, err := time.Parse("2006-01-02 15:04:05", parts[0])
+			startTime, err := time.Parse("2006-01-02 15:04:05", parts[0])
 			if err != nil {
 				return fmt.Errorf("parsing start time: %w", err)
 			}
-			provider = providers.NewHistoricalDataProvider(db, targetTime)
-		} else {
+
+			endTime, err := time.Parse("2006-01-02 15:04:05", parts[1])
+			if err != nil {
+				return fmt.Errorf("parsing end time: %w", err)
+			}
+
+			fmt.Printf("Scanning historical data from %s to %s...\n", startTime.Format("2006-01-02 15:04:05"), endTime.Format("2006-01-02 15:04:05"))
+
+			timestamps, err := db.GetTimestampsInRange(startTime, endTime)
+			if err != nil {
+				return fmt.Errorf("getting timestamps: %w", err)
+			}
+
+			if len(timestamps) == 0 {
+				fmt.Println("No snapshots found in the specified time range")
+				return nil
+			}
+
+			fmt.Printf("Found %d timestamps to scan\n", len(timestamps))
+
+			var allOpportunities []types.ArbitrageOpportunity
+
+			for i, ts := range timestamps {
+				fmt.Printf("\n[%d/%d] Scanning at %s...\n", i+1, len(timestamps), ts.Format("2006-01-02 15:04:05"))
+
+				provider = providers.NewHistoricalDataProvider(db, ts)
+				markets, err := provider.FetchMarkets(scanMaxMarkets)
+				if err != nil {
+					fmt.Printf("Error fetching markets at %s: %v\n", ts.Format("2006-01-02 15:04:05"), err)
+					continue
+				}
+
+				var opportunities []types.ArbitrageOpportunity
+				switch strategyType {
+				case "dutch_book":
+					opportunities = strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+				case "multi_outcome":
+					opportunities = strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+				case "all":
+					dutchBookOpps := strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+					multiOutcomeOpps := strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+					opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+				default:
+					return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
+				}
+
+				for _, opp := range opportunities {
+					if opp.NetProfit >= minProfit {
+						allOpportunities = append(allOpportunities, opp)
+					}
+				}
+			}
+
+			fmt.Printf("\nTotal opportunities across %d timestamps: %d\n", len(timestamps), len(allOpportunities))
+
+			var filtered []types.ArbitrageOpportunity
+			for _, opp := range allOpportunities {
+				if opp.NetProfit >= minProfit {
+					filtered = append(filtered, opp)
+				}
+				if len(filtered) >= scanLimit {
+					break
+				}
+			}
+
+			fmt.Printf("\nFound %d opportunities (top %d displayed)\n", len(allOpportunities), len(filtered))
+			output.PrintOpportunities(filtered)
+			return nil
+		}
+
+		if historicalTime != "" {
 			fmt.Printf("Fetching markets from historical data at %s...\n", historicalTime)
 
 			targetTime, err := time.Parse("2006-01-02 15:04:05", historicalTime)

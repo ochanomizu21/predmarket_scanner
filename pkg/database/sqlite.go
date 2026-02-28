@@ -230,6 +230,36 @@ func (d *DB) GetLatestSnapshotByTokenID(tokenID string, before time.Time) (*prov
 	return &s, nil
 }
 
+func (d *DB) GetTimestampsInRange(startTime, endTime time.Time) ([]time.Time, error) {
+	query := `
+		SELECT DISTINCT timestamp
+		FROM snapshots
+		WHERE timestamp >= ? AND timestamp <= ?
+		ORDER BY timestamp
+	`
+
+	rows, err := d.Query(query, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var timestamps []time.Time
+	for rows.Next() {
+		var tsStr string
+		if err := rows.Scan(&tsStr); err != nil {
+			return nil, err
+		}
+		ts, err := time.Parse(time.RFC3339, tsStr)
+		if err != nil {
+			continue
+		}
+		timestamps = append(timestamps, ts)
+	}
+
+	return timestamps, nil
+}
+
 func (d *DB) GetSnapshotData(snapshotID int64) (*providers.SnapshotDetail, error) {
 	query := `
 		SELECT s.id, s.market_id, s.timestamp, m.question, m.liquidity, m.volume

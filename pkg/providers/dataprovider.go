@@ -84,6 +84,7 @@ type Database interface {
 	GetSnapshotData(snapshotID int64) (*SnapshotDetail, error)
 	GetOrderBookLevels(snapshotID int64, tokenID, side string) ([]OrderBookLevel, error)
 	FetchMarketsAtTime(targetTime time.Time, maxMarkets int) ([]MarketData, error)
+	GetTimestampsInRange(startTime, endTime time.Time) ([]time.Time, error)
 }
 
 func NewHistoricalDataProvider(db Database, targetTime time.Time) *HistoricalDataProvider {
