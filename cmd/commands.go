@@ -753,15 +753,18 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 	totalHistoryPoints := 0
 	failedMarkets := 0
 	completedTasks := 0
+	lastProgressMilestone := 0
 
 	for result := range resultChan {
 		completedTasks++
-		totalMarkets++
 
 		progress := float64(completedTasks) / float64(len(tasks)) * 100
-		fmt.Printf("\rProgress: [%-50s] %.1f%% (%d/%d)    ",
-			strings.Repeat("=", int(progress/2))+">",
-			progress, completedTasks, len(tasks))
+		currentMilestone := int(progress / 10) * 10
+
+		if currentMilestone > lastProgressMilestone {
+			fmt.Printf("\rProgress: %.1f%% (%d/%d tasks)", progress, completedTasks, len(tasks))
+			lastProgressMilestone = currentMilestone
+		}
 
 		if !result.success {
 			failedMarkets++
@@ -769,10 +772,6 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 		}
 
 		totalHistoryPoints += result.points
-
-		if completedTasks%10 == 0 {
-			fmt.Printf("\n")
-		}
 	}
 
 	fmt.Println()
