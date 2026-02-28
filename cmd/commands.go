@@ -38,6 +38,8 @@ var (
 	historyLimit   int
 	historyMaxDays int
 	historyInterval string
+	recordIncludeOrderBook bool
+	recordOrderBookLevels  int
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -67,6 +69,8 @@ func init() {
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
 	RecordCmd.Flags().IntVarP(&recordInterval, "interval", "i", 60, "Recording interval in seconds")
 	RecordCmd.Flags().IntVar(&recordMaxMarkets, "max-markets", 500, "Maximum number of markets to record")
+	RecordCmd.Flags().BoolVar(&recordIncludeOrderBook, "order-book", true, "Include full order book data (uses more API calls)")
+	RecordCmd.Flags().IntVar(&recordOrderBookLevels, "order-book-levels", 10, "Number of order book levels to record per side")
 	FetchHistoryCmd.Flags().IntVar(&historyLimit, "limit", 100, "Maximum number of markets to fetch history for")
 	FetchHistoryCmd.Flags().IntVar(&historyMaxDays, "max-days", 30, "Maximum number of days of history to fetch")
 	FetchHistoryCmd.Flags().StringVar(&historyInterval, "interval", "1d", "Price history interval (1m, 1h, 6h, 1d)")
@@ -307,6 +311,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Recording to data/history.db\n")
 	fmt.Printf("Recording interval: %d seconds\n", recordInterval)
 	fmt.Printf("Max markets to record: %d\n", recordMaxMarkets)
+	fmt.Printf("Order book recording: %v (max %d levels per side)\n", recordIncludeOrderBook, recordOrderBookLevels)
 	fmt.Println("Press Ctrl+C to stop recording...")
 
 	client := clients.NewPolymarketClient()
@@ -357,36 +362,44 @@ func runRecord(cmd *cobra.Command, args []string) error {
 						continue
 					}
 
-					book, err := client.FetchOrderBook(outcome.Name)
-					if err != nil {
-						continue
-					}
-
-					bidLevels := make([]providers.OrderBookLevel, 0, len(book.Bids))
-					for _, bid := range book.Bids {
-						price, _ := strconv.ParseFloat(bid.Price, 64)
-						size, _ := strconv.ParseFloat(bid.Size, 64)
-						bidLevels = append(bidLevels, providers.OrderBookLevel{Price: price, Size: size})
-					}
-
-					if len(bidLevels) > 0 {
-						err := db.InsertOrderBookLevels(snapshotID, outcome.Name, "bid", bidLevels)
+					if recordIncludeOrderBook {
+						book, err := client.FetchOrderBook(outcome.Name)
 						if err != nil {
-							fmt.Printf("Error inserting bid levels for market %s: %v\n", market.ID, err)
+							continue
 						}
-					}
 
-					askLevels := make([]providers.OrderBookLevel, 0, len(book.Asks))
-					for _, ask := range book.Asks {
-						price, _ := strconv.ParseFloat(ask.Price, 64)
-						size, _ := strconv.ParseFloat(ask.Size, 64)
-						askLevels = append(askLevels, providers.OrderBookLevel{Price: price, Size: size})
-					}
+						bidLevels := make([]providers.OrderBookLevel, 0, recordOrderBookLevels)
+						for i, bid := range book.Bids {
+							if i >= recordOrderBookLevels {
+								break
+							}
+							price, _ := strconv.ParseFloat(bid.Price, 64)
+							size, _ := strconv.ParseFloat(bid.Size, 64)
+							bidLevels = append(bidLevels, providers.OrderBookLevel{Price: price, Size: size})
+						}
 
-					if len(askLevels) > 0 {
-						err := db.InsertOrderBookLevels(snapshotID, outcome.Name, "ask", askLevels)
-						if err != nil {
-							fmt.Printf("Error inserting ask levels for market %s: %v\n", market.ID, err)
+						if len(bidLevels) > 0 {
+							err := db.InsertOrderBookLevels(snapshotID, outcome.Name, "bid", bidLevels)
+							if err != nil {
+								fmt.Printf("Error inserting bid levels for market %s: %v\n", market.ID, err)
+							}
+						}
+
+						askLevels := make([]providers.OrderBookLevel, 0, recordOrderBookLevels)
+						for i, ask := range book.Asks {
+							if i >= recordOrderBookLevels {
+								break
+							}
+							price, _ := strconv.ParseFloat(ask.Price, 64)
+							size, _ := strconv.ParseFloat(ask.Size, 64)
+							askLevels = append(askLevels, providers.OrderBookLevel{Price: price, Size: size})
+						}
+
+						if len(askLevels) > 0 {
+							err := db.InsertOrderBookLevels(snapshotID, outcome.Name, "ask", askLevels)
+							if err != nil {
+								fmt.Printf("Error inserting ask levels for market %s: %v\n", market.ID, err)
+							}
 						}
 					}
 				}

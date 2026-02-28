@@ -256,6 +256,8 @@ predmarket-scanner record [flags]
 |------|------|---------|-------------|
 | `-i, --interval` | int | 60 | Recording interval in seconds |
 | `--max-markets` | int | 500 | Maximum number of markets to record |
+| `--order-book` | bool | true | Include full order book data |
+| `--order-book-levels` | int | 10 | Number of order book levels per side (1-20) |
 
 ### Examples
 
@@ -271,6 +273,12 @@ predmarket-scanner record --max-markets 100
 
 # Record every 30 seconds with 200 markets
 predmarket-scanner record --interval 30 --max-markets 200
+
+# Record prices only (no order book, uses fewer API calls)
+predmarket-scanner record --order-book=false
+
+# Record with only top 3 order book levels (reduces storage & API calls)
+predmarket-scanner record --order-book-levels=3
 ```
 
 ### Data Storage
