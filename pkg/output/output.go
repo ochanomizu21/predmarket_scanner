@@ -108,3 +108,68 @@ func ExportCSV(opportunities []types.ArbitrageOpportunity, path string) error {
 
 	return nil
 }
+
+type MarketExport struct {
+	ID          string           `json:"id"`
+	Question    string           `json:"question"`
+	Liquidity   float64          `json:"liquidity"`
+	Volume      float64          `json:"volume"`
+	Outcomes   []OutcomeExport  `json:"outcomes"`
+	Sum        float64          `json:"sum"`
+	IsBinary    bool             `json:"is_binary"`
+	HasYesNo   bool             `json:"has_yes_no"`
+}
+
+type OutcomeExport struct {
+	Name  string  `json:"name"`
+	Price float64 `json:"price"`
+}
+
+func ExportMarketsJSON(markets []types.Market, path string) error {
+	exports := make([]MarketExport, len(markets))
+	
+	for i, m := range markets {
+		exp := MarketExport{
+			ID:        m.ID,
+			Question:  m.Question,
+			Liquidity: m.Liquidity,
+			Volume:    m.Volume,
+			Outcomes:  make([]OutcomeExport, len(m.Outcomes)),
+		}
+		
+		sum := 0.0
+		for j, o := range m.Outcomes {
+			exp.Outcomes[j] = OutcomeExport{
+				Name:  o.Name,
+				Price: o.Price,
+			}
+			sum += o.Price
+		}
+		exp.Sum = sum
+		exp.IsBinary = len(m.Outcomes) == 2
+		
+		hasYes, hasNo := false, false
+		for _, o := range m.Outcomes {
+			if o.Name == "YES" {
+				hasYes = true
+			}
+			if o.Name == "NO" {
+				hasNo = true
+			}
+		}
+		exp.HasYesNo = hasYes && hasNo
+		
+		exports[i] = exp
+	}
+	
+	data, err := json.MarshalIndent(exports, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling JSON: %w", err)
+	}
+	
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("writing file: %w", err)
+	}
+	
+	return nil
+}

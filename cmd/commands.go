@@ -64,6 +64,8 @@ var (
 	fetchStartRank int
 	fetchEndRank   int
 	scanWorkers    int
+	scanDebug      bool
+	scanExportOpps string
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -97,6 +99,9 @@ func init() {
 	ScanCmd.Flags().StringVar(&timeRange, "time-range", "", "Time range for historical scanning (RFC3339 start,end)")
 	ScanCmd.Flags().StringVar(&dbPath, "db", "data/history.db", "Path to SQLite database for historical data")
 	ScanCmd.Flags().IntVar(&scanWorkers, "workers", 4, "Number of concurrent workers for historical scanning")
+	ScanCmd.Flags().StringVar(&exportOutput, "output", "", "Export markets to JSON file (for debugging)")
+	ScanCmd.Flags().BoolVar(&scanDebug, "debug", false, "Enable debug output (show all markets checked)")
+	ScanCmd.Flags().StringVar(&scanExportOpps, "export-opps", "", "Export opportunities to JSON file")
 	ExportCmd.Flags().StringVarP(&exportFormat, "format", "f", "json", "Export format (json or csv)")
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
 	RecordCmd.Flags().IntVarP(&recordInterval, "interval", "i", 60, "Recording interval in seconds")
@@ -425,6 +430,42 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Found %d markets\n", len(markets))
 
+	if exportOutput != "" {
+		exportPath := exportOutput
+		if !strings.HasSuffix(exportPath, ".json") {
+			exportPath += ".json"
+		}
+		if err := output.ExportMarketsJSON(markets, exportPath); err != nil {
+			return fmt.Errorf("exporting markets: %w", err)
+		}
+		fmt.Printf("Exported %d markets to %s\n", len(markets), exportPath)
+	}
+
+	if scanDebug {
+		fmt.Println("\n=== Debug: Markets being scanned ===")
+		for i, m := range markets {
+			sum := 0.0
+			for _, o := range m.Outcomes {
+				sum += o.Price
+			}
+			hasYes, hasNo := false, false
+			for _, o := range m.Outcomes {
+				if strings.EqualFold(o.Name, "yes") {
+					hasYes = true
+				}
+				if strings.EqualFold(o.Name, "no") {
+					hasNo = true
+				}
+			}
+			question := m.Question
+			if len(question) > 40 {
+				question = question[:40]
+			}
+			fmt.Printf("[%d] %s | outcomes=%d sum=%.4f binary=%v yesno=%v\n",
+				i, question, len(m.Outcomes), sum, len(m.Outcomes) == 2, hasYes && hasNo)
+		}
+	}
+
 	fmt.Printf("Scanning for arbitrage opportunities (size: $%.2f, max-slippage: %.2f%%, strategy: %s%s)...\n",
 		executionSize, maxSlippage, strategyType, skipSlippageStr())
 
@@ -455,6 +496,17 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 	default:
 		return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
+	}
+
+	if scanExportOpps != "" {
+		exportPath := scanExportOpps
+		if !strings.HasSuffix(exportPath, ".json") {
+			exportPath += ".json"
+		}
+		if err := output.ExportJSON(opportunities, exportPath); err != nil {
+			return fmt.Errorf("exporting opportunities: %w", err)
+		}
+		fmt.Printf("Exported %d opportunities to %s\n", len(opportunities), exportPath)
 	}
 
 	fmt.Printf("\nFound %d opportunities\n", len(opportunities))

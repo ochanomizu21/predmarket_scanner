@@ -2,6 +2,7 @@ package strategies
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ochanomizu/predmarket-scanner/internal/fees"
 	"github.com/ochanomizu/predmarket-scanner/internal/scoring"
@@ -40,10 +41,10 @@ func isBinaryMarket(market types.Market) bool {
 	hasYes := false
 	hasNo := false
 	for _, outcome := range market.Outcomes {
-		if outcome.Name == "YES" {
+		if strings.EqualFold(outcome.Name, "yes") {
 			hasYes = true
 		}
-		if outcome.Name == "NO" {
+		if strings.EqualFold(outcome.Name, "no") {
 			hasNo = true
 		}
 	}
@@ -62,10 +63,10 @@ func checkDutchBookWithSlippageAndMinProfit(market types.Market, executionSize, 
 
 	var yesPrice, noPrice float64
 	for _, outcome := range market.Outcomes {
-		if outcome.Name == "YES" {
+		if strings.EqualFold(outcome.Name, "yes") {
 			yesPrice = outcome.Price
 		}
-		if outcome.Name == "NO" {
+		if strings.EqualFold(outcome.Name, "no") {
 			noPrice = outcome.Price
 		}
 	}
@@ -128,10 +129,10 @@ func checkDutchBookNoSlippage(market types.Market, minProfit float64) *types.Arb
 
 	var yesPrice, noPrice float64
 	for _, outcome := range market.Outcomes {
-		if outcome.Name == "YES" {
+		if strings.EqualFold(outcome.Name, "yes") {
 			yesPrice = outcome.Price
 		}
-		if outcome.Name == "NO" {
+		if strings.EqualFold(outcome.Name, "no") {
 			noPrice = outcome.Price
 		}
 	}
@@ -181,11 +182,11 @@ func CheckDutchBookWithOrderBooksMinProfit(market types.Market, orderBooks map[s
 	var yesPrice, noPrice float64
 
 	for _, outcome := range market.Outcomes {
-		if outcome.Name == "YES" {
+		if strings.EqualFold(outcome.Name, "yes") {
 			yesPrice = outcome.Price
 			yesTokenID = outcome.Name
 		}
-		if outcome.Name == "NO" {
+		if strings.EqualFold(outcome.Name, "no") {
 			noPrice = outcome.Price
 			noTokenID = outcome.Name
 		}
