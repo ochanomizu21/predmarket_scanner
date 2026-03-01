@@ -69,13 +69,20 @@ func (l *JSONLLogger) Stop() {
 		log.Printf("Flushed bufio writer\n")
 		l.writer = nil
 	}
+
 	if l.gzipWriter != nil {
 		l.gzipWriter.Flush()
 		log.Printf("Flushed gzip writer\n")
+		l.mu.Unlock()
+
 		l.gzipWriter.Close()
 		log.Printf("Closed gzip writer\n")
 		l.gzipWriter = nil
+	} else {
+		l.mu.Unlock()
 	}
+
+	l.mu.Lock()
 	if l.file != nil {
 		l.file.Sync()
 		l.file.Close()
