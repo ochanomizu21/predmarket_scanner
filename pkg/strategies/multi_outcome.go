@@ -97,13 +97,15 @@ func checkMultiOutcomeWithSlippageMinProfit(market types.Market, executionSize, 
 		}
 	}
 
+	score, factors := scoring.CalculateScore(market, netProfit)
 	return &types.ArbitrageOpportunity{
 		Market:             market,
 		Strategy:           types.MultiOutcome,
 		GrossProfit:        grossProfit,
 		NetProfit:          netProfit,
 		FeeCost:            feeCost,
-		Score:              scoring.CalculateScore(market, netProfit),
+		Score:              score,
+		ScoreFactors:       types.ScoreFactors(factors),
 		ExecutionPlan: types.ExecutionPlan{
 			Legs:             legs,
 			TotalCost:        sum,
@@ -191,13 +193,15 @@ func CheckMultiOutcomeWithOrderBooksMinProfit(market types.Market, orderBooks ma
 		}
 	}
 
+	score, factors := scoring.CalculateScore(market, netProfit)
 	return &types.ArbitrageOpportunity{
 		Market:             market,
 		Strategy:           types.MultiOutcome,
 		GrossProfit:        grossProfit,
 		NetProfit:          netProfit,
 		FeeCost:            feeCost,
-		Score:              scoring.CalculateScore(market, netProfit),
+		Score:              score,
+		ScoreFactors:       types.ScoreFactors(factors),
 		ExecutionPlan: types.ExecutionPlan{
 			Legs:             legs,
 			TotalCost:        sum * float64(len(market.Outcomes)),
@@ -240,13 +244,15 @@ func checkMultiOutcomeNoSlippage(market types.Market, minProfit float64) *types.
 		}
 	}
 
+	score, factors := scoring.CalculateScore(market, netProfit)
 	return &types.ArbitrageOpportunity{
 		Market:             market,
 		Strategy:           types.MultiOutcome,
 		GrossProfit:        grossProfit,
 		NetProfit:          netProfit,
 		FeeCost:            feeCost,
-		Score:              scoring.CalculateScore(market, netProfit),
+		Score:              score,
+		ScoreFactors:       types.ScoreFactors(factors),
 		ExecutionPlan: types.ExecutionPlan{
 			Legs:             legs,
 			TotalCost:        sum,

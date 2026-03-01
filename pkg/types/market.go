@@ -51,11 +51,20 @@ type ArbitrageOpportunity struct {
 	NetProfit          float64       `json:"net_profit"`
 	FeeCost            float64       `json:"fee_cost"`
 	Score              float64       `json:"score"`
+	ScoreFactors       ScoreFactors  `json:"score_factors"`
 	ExecutionPlan      ExecutionPlan `json:"execution_plan"`
 	SlippageImpact     float64       `json:"slippage_impact"`
 	YesSlippage        float64       `json:"yes_slippage"`
 	NoSlippage         float64       `json:"no_slippage"`
 	AvailableLiquidity float64       `json:"available_liquidity"`
+}
+
+type ScoreFactors struct {
+	ProfitScore    float64 `json:"profit_score"`
+	LiquidityScore float64 `json:"liquidity_score"`
+	VolumeScore    float64 `json:"volume_score"`
+	ExecutionRisk  float64 `json:"execution_risk"`
+	TimeDecay      float64 `json:"time_decay"`
 }
 
 type ExecutionPlan struct {

@@ -8,14 +8,14 @@ import (
 )
 
 type ScoreFactors struct {
-	ProfitScore    float64
-	LiquidityScore float64
-	VolumeScore    float64
-	ExecutionRisk  float64
-	TimeDecay      float64
+	ProfitScore    float64 `json:"profit_score"`
+	LiquidityScore float64 `json:"liquidity_score"`
+	VolumeScore    float64 `json:"volume_score"`
+	ExecutionRisk  float64 `json:"execution_risk"`
+	TimeDecay      float64 `json:"time_decay"`
 }
 
-func CalculateScore(market types.Market, netProfit float64) float64 {
+func CalculateScore(market types.Market, netProfit float64) (float64, ScoreFactors) {
 	factors := ScoreFactors{
 		ProfitScore:    normalizeProfit(netProfit),
 		LiquidityScore: normalizeLiquidity(market.Liquidity),
@@ -24,11 +24,13 @@ func CalculateScore(market types.Market, netProfit float64) float64 {
 		TimeDecay:      calculateTimeDecay(market.EndTime),
 	}
 
-	return (factors.ProfitScore * 0.4) +
+	score := (factors.ProfitScore * 0.4) +
 		(factors.LiquidityScore * 0.25) +
 		(factors.VolumeScore * 0.15) +
 		(factors.ExecutionRisk * 0.15) +
 		(factors.TimeDecay * 0.05)
+
+	return score, factors
 }
 
 func normalizeProfit(profit float64) float64 {

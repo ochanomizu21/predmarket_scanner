@@ -88,13 +88,15 @@ func checkDutchBookWithSlippageAndMinProfit(market types.Market, executionSize, 
 		return nil
 	}
 
+	score, factors := scoring.CalculateScore(market, netProfit)
 	return &types.ArbitrageOpportunity{
 		Market:             market,
 		Strategy:           types.DutchBook,
 		GrossProfit:        grossProfit,
 		NetProfit:          netProfit,
 		FeeCost:            feeCost,
-		Score:              scoring.CalculateScore(market, netProfit),
+		Score:              score,
+		ScoreFactors:       types.ScoreFactors(factors),
 		ExecutionPlan:      buildExecutionPlan(yesPrice, noPrice),
 		SlippageImpact:     0,
 		YesSlippage:        0,
@@ -154,13 +156,15 @@ func checkDutchBookNoSlippage(market types.Market, minProfit float64) *types.Arb
 		return nil
 	}
 
+	score, factors := scoring.CalculateScore(market, netProfit)
 	return &types.ArbitrageOpportunity{
 		Market:             market,
 		Strategy:           types.DutchBook,
 		GrossProfit:        grossProfit,
 		NetProfit:          netProfit,
 		FeeCost:            feeCost,
-		Score:              scoring.CalculateScore(market, netProfit),
+		Score:              score,
+		ScoreFactors:       types.ScoreFactors(factors),
 		ExecutionPlan:      buildExecutionPlan(yesPrice, noPrice),
 		SlippageImpact:     0,
 		YesSlippage:        0,
@@ -230,6 +234,7 @@ func CheckDutchBookWithOrderBooksMinProfit(market types.Market, orderBooks map[s
 	}
 
 	slippageImpact := (yesExecPrice - yesPrice) + (noExecPrice - noPrice)
+	score, factors := scoring.CalculateScore(market, netProfit)
 
 	return &types.ArbitrageOpportunity{
 		Market:             market,
@@ -237,7 +242,8 @@ func CheckDutchBookWithOrderBooksMinProfit(market types.Market, orderBooks map[s
 		GrossProfit:        grossProfit,
 		NetProfit:          netProfit,
 		FeeCost:            feeCost,
-		Score:              scoring.CalculateScore(market, netProfit),
+		Score:              score,
+		ScoreFactors:       types.ScoreFactors(factors),
 		ExecutionPlan:      buildExecutionPlanWithSlippage(yesExecPrice, noExecPrice, executionSize, yesSlippage, noSlippage),
 		SlippageImpact:     slippageImpact,
 		YesSlippage:        yesSlippage.Slippage,
