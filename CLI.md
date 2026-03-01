@@ -132,9 +132,16 @@ predmarket-scanner scan [flags]
 | `--max-markets` | int | 0 (all) | Maximum number of markets to fetch |
 | `--strategy` | string | all | Strategy to use: `all`, `dutch_book`, `multi_outcome` |
 | `--historical` | bool | false | Enable historical backtesting mode |
-| `--time` | string | "" | Target historical timestamp (format: YYYY-MM-DD HH:MM:SS) |
+| `--time` | string | "" | Target historical timestamp (RFC3339 format) |
 | `--time-range` | string | "" | Time range for historical scanning (format: start,end) |
 | `--db` | string | data/history.db | Path to SQLite database for historical data |
+| `--workers` | int | 4 | Number of concurrent workers for historical scanning |
+| `--skip-slippage` | bool | false | Skip order book fetch and slippage calculation |
+| `--no-fees` | bool | false | Ignore Polymarket fees (for non-crypto markets) |
+| `--detailed` | bool | false | Show detailed output with score breakdown |
+| `--output` | string | "" | Export markets to JSON file (for debugging) |
+| `--export-opps` | string | "" | Export opportunities to JSON file |
+| `--debug` | bool | false | Enable debug output (show all markets checked) |
 
 ### Examples
 
@@ -158,32 +165,62 @@ predmarket-scanner scan --size 100 --max-slippage 0.5 --min-profit 0.01
 
 # Limit to first 1000 markets
 predmarket-scanner scan --max-markets 1000 --limit 20
+
+# Skip order book fetch for faster scanning
+predmarket-scanner scan --skip-slippage
+
+# Show score breakdown
+predmarket-scanner scan --detailed
+
+# Export opportunities to file
+predmarket-scanner scan --export-opps opportunities.json
+
+# Debug: export raw markets and show all checked
+predmarket-scanner scan --output markets.json --debug
 ```
 
 **Historical Backtesting:**
 
 ```bash
-# Scan data from a specific point in time
-predmarket-scanner scan --historical --time "2026-02-28 12:00:00"
+# Scan data from a specific point in time (RFC3339 format with timezone)
+predmarket-scanner scan --historical --time "2026-02-28T12:00:00+01:00"
 
 # Use a custom database path
-predmarket-scanner scan --historical --time "2026-02-28 12:00:00" --db /path/to/history.db
+predmarket-scanner scan --historical --time "2026-02-28T12:00:00+01:00" --db /path/to/history.db
 
 # Scan across a time range
-predmarket-scanner scan --historical --time-range "2026-02-28 00:00:00,2026-02-28 23:59:59"
+predmarket-scanner scan --historical --time-range "2026-02-28T00:00:00+01:00,2026-02-28T23:59:59+01:00"
+
+# Use multiple workers for faster scanning
+predmarket-scanner scan --historical --time-range "..." --workers 8
+
+# Scan without fees (for non-crypto markets)
+predmarket-scanner scan --historical --time-range "..." --no-fees
 ```
 
 ### Output Columns
+
+**Default view:**
 
 | Column | Description |
 |--------|-------------|
 | Market | Market question |
 | Gross % | Theoretical profit before fees and slippage |
-| Net % | Actual profit after fees and slippage |
-| Fee % | Polymarket trading fees (2%) |
+| Net % | Actual profit after fees (price-dependent) and slippage |
+| Fee % | Polymarket trading fees (most markets are fee-free, only 15-min crypto/Serie A/NCAAB have fees) |
 | Slip % | Price impact from order book depth |
 | Liq $ | Available market liquidity in USDC |
 | Score | Risk-adjusted score (higher = better) |
+
+**Detailed view (with `--detailed` flag):**
+
+| Column | Description |
+|--------|-------------|
+| P_Sc | Profit Score (40% weight) |
+| L_Sc | Liquidity Score (25% weight) |
+| V_Sc | Volume Score (15% weight) |
+| E_Rk | Execution Risk (15% weight) |
+| T_Dc | Time Decay (5% weight) |
 
 ---
 
@@ -411,6 +448,9 @@ predmarket-scanner scan --strategy multi_outcome --max-markets 1000
 3. **Use `--min-profit` to filter low-quality opportunities** - Set higher values (e.g., 0.01 for 1%) to focus on better trades.
 4. **Start recording data early** - Historical backtesting requires data. Run `record` in the background to build your dataset.
 5. **Combine with export for analysis** - Export opportunities and analyze in your preferred tool (Excel, Python, etc.).
+6. **Use `--skip-slippage` for faster scanning** - Skips order book API calls.
+7. **Use `--detailed` to see score breakdown** - Shows profit, liquidity, volume, execution risk, and time decay components.
+8. **Use `--output` for debugging** - Export raw market data to see what's being scanned.
 
 ---
 

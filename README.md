@@ -44,9 +44,9 @@ First, start the recording daemon to collect data:
 ```bash
 ./bin/predmarket-scanner record --interval 30 --max-markets 500
 ```
-Then, scan the recorded data at a specific timestamp:
+Then, scan the recorded data at a specific timestamp (RFC3339 format):
 ```bash
-./bin/predmarket-scanner scan --historical --time "2026-02-28 12:00:00"
+./bin/predmarket-scanner scan --historical --time "2026-02-28T12:00:00+01:00"
 ```
 
 ---
