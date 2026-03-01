@@ -74,18 +74,20 @@ type LiveDataProvider struct {
 	client *clients.PolymarketClient
 	offset int
 	limit  int
+	includeClosed bool
 }
 
-func NewLiveDataProvider(offset, limit int) *LiveDataProvider {
+func NewLiveDataProvider(offset, limit int, includeClosed bool) *LiveDataProvider {
 	return &LiveDataProvider{
 		client: clients.NewPolymarketClient(),
 		offset: offset,
 		limit:  limit,
+		includeClosed: includeClosed,
 	}
 }
 
 func (p *LiveDataProvider) FetchMarkets(maxMarkets int) ([]types.Market, error) {
-	markets, err := p.client.FetchMarkets(maxMarkets)
+	markets, err := p.client.FetchMarketsFilterOffset(maxMarkets, p.offset, 0, 0, p.includeClosed)
 	if err != nil {
 		return nil, err
 	}

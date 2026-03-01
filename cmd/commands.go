@@ -68,6 +68,7 @@ var (
 	scanExportOpps string
 	scanNoFees    bool
 	scanDetailed  bool
+	scanClosed    bool
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -105,6 +106,7 @@ func init() {
 	ScanCmd.Flags().StringVar(&scanExportOpps, "export-opps", "", "Export opportunities to JSON file")
 	ScanCmd.Flags().BoolVar(&scanNoFees, "no-fees", false, "Ignore Polymarket fees (for markets without trading fees)")
 	ScanCmd.Flags().BoolVar(&scanDetailed, "detailed", false, "Show detailed output with score breakdown")
+	ScanCmd.Flags().BoolVar(&scanClosed, "closed", false, "Include closed/resolved markets")
 	ExportCmd.Flags().StringVarP(&exportFormat, "format", "f", "json", "Export format (json or csv)")
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
 	RecordCmd.Flags().IntVarP(&recordInterval, "interval", "i", 60, "Recording interval in seconds")
@@ -436,7 +438,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Scanning markets: offset=%d, limit=%d\n", offset, limit)
 		}
 
-		provider = providers.NewLiveDataProvider(offset, limit)
+		provider = providers.NewLiveDataProvider(offset, limit, scanClosed)
 	}
 
 	markets, err := provider.FetchMarkets(scanMaxMarkets)
