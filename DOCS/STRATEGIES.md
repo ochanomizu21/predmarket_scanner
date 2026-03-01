@@ -19,7 +19,7 @@ In a binary market, “YES” and “NO” should sum to 1 (or very close). When
 **Implementation Notes**
 - **File**: `pkg/strategies/dutch_book.go`
 - **Logic**: Filters for binary markets, calculates `1.0 - (YES + NO)`, and performs slippage simulation on both order books via the CLOB API.
-- **Fees**: Accounts for Polymarket's 2% fee on winnings.
+- **Fees**: Currently applies price-dependent fees using formula `price * (1-price) * fee_rate`. Most markets are fee-free; only 15-min crypto, Serie A, and NCAAB markets have fees. See Section 7 for implementation status.
 - **Competition**: Extreme. On Polymarket, windows often close in ~200ms and are dominated by HFT bots.
 
 ### 1.2 Multi-Condition Dutch-Book Arbitrage (Multi-Outcome) [✅ IMPLEMENTED]
@@ -131,4 +131,43 @@ Opportunities are ranked using a multi-factor **Risk-Adjusted Score (0-1)**:
 ### Risk Mitigation
 - **Slippage Simulation**: We never assume the "best price." Every opportunity is re-calculated by simulating the actual execution size against the full order book depth.
 - **Minimum Profit Threshold**: Filters out "micro-arbs" that might be erased by network latency or price movements during execution.
-- **Fee Awareness**: Automatically deducts Polymarket's 2% fee on winnings before calculating net profit.
+- **Fee Awareness**: Automatically deducts Polymarket's fees before calculating net profit. See Section 7.
+
+---
+
+## 7. Fee Implementation [📋 IN PROGRESS]
+
+Polymarket charges fees only on specific market types:
+- **Fee-free markets**: Most markets (default)
+- **Fee-enabled markets**: 15-min crypto markets, Serie A, NCAAB (starting Feb 2026)
+
+### Fee Structure
+
+Fees follow the formula: `fee = C × feeRate × (p × (1-p))^exponent`
+
+| Market Type | Fee Rate | Exponent | Max Effective Fee |
+|-------------|----------|----------|-------------------|
+| 5-min/15-min crypto | 0.25 (25%) | 2 | ~1.56% at 50% |
+| Serie A / NCAAB | 0.0175 (1.75%) | 1 | ~0.44% at 50% |
+
+### Current Implementation Status
+
+- ✅ Basic fee calculation with price-dependent formula
+- ✅ `fee_rate_bps` field in Market type for API-sourced rates
+- ❌ **NOT IMPLEMENTED**: Per-token fee rate fetching from CLOB API
+
+### Future Work Required
+
+To get accurate fees per market, implement per-token fee fetching:
+
+```go
+// Requires separate API call per token
+GET https://clob.polymarket.com/fee-rate?token_id={token_id}
+```
+
+This would require:
+1. Fetching `clobTokenIDs` for each market
+2. Making N API calls to get fee rates
+3. Caching results to avoid excessive API calls
+
+Alternatively, maintain a hardcoded list of known fee-enabled market types/categories and apply fees based on market metadata.
