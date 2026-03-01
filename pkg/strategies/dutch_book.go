@@ -14,11 +14,18 @@ func FindOpportunities(markets []types.Market) []types.ArbitrageOpportunity {
 }
 
 func FindOpportunitiesWithSize(markets []types.Market, executionSize float64, maxSlippagePercent float64) []types.ArbitrageOpportunity {
+	return FindOpportunitiesWithSizeAndMinProfit(markets, executionSize, maxSlippagePercent, 0.001, 0)
+}
+
+func FindOpportunitiesWithSizeAndMinProfit(markets []types.Market, executionSize, maxSlippagePercent, minProfit float64, limit int) []types.ArbitrageOpportunity {
 	var opportunities []types.ArbitrageOpportunity
 
 	for _, market := range markets {
-		if opp := checkDutchBookWithSlippage(market, executionSize, maxSlippagePercent); opp != nil {
+		if opp := checkDutchBookWithSlippageAndMinProfit(market, executionSize, maxSlippagePercent, minProfit); opp != nil {
 			opportunities = append(opportunities, *opp)
+			if limit > 0 && len(opportunities) >= limit {
+				break
+			}
 		}
 	}
 
@@ -45,6 +52,10 @@ func isBinaryMarket(market types.Market) bool {
 }
 
 func checkDutchBookWithSlippage(market types.Market, executionSize, maxSlippagePercent float64) *types.ArbitrageOpportunity {
+	return checkDutchBookWithSlippageAndMinProfit(market, executionSize, maxSlippagePercent, 0.001)
+}
+
+func checkDutchBookWithSlippageAndMinProfit(market types.Market, executionSize, maxSlippagePercent, minProfit float64) *types.ArbitrageOpportunity {
 	if !isBinaryMarket(market) {
 		return nil
 	}
@@ -72,7 +83,7 @@ func checkDutchBookWithSlippage(market types.Market, executionSize, maxSlippageP
 		feeCost := fees.CalculatePolymarketFee(grossProfit, market)
 	netProfit := grossProfit - feeCost
 
-	if netProfit < 0.001 {
+	if netProfit < minProfit {
 		return nil
 	}
 
@@ -92,11 +103,18 @@ func checkDutchBookWithSlippage(market types.Market, executionSize, maxSlippageP
 }
 
 func FindOpportunitiesNoSlippage(markets []types.Market, minProfit float64) []types.ArbitrageOpportunity {
+	return FindOpportunitiesNoSlippageLimit(markets, minProfit, 0)
+}
+
+func FindOpportunitiesNoSlippageLimit(markets []types.Market, minProfit float64, limit int) []types.ArbitrageOpportunity {
 	var opportunities []types.ArbitrageOpportunity
 
 	for _, market := range markets {
 		if opp := checkDutchBookNoSlippage(market, minProfit); opp != nil {
 			opportunities = append(opportunities, *opp)
+			if limit > 0 && len(opportunities) >= limit {
+				break
+			}
 		}
 	}
 
@@ -151,6 +169,10 @@ func checkDutchBookNoSlippage(market types.Market, minProfit float64) *types.Arb
 }
 
 func CheckDutchBookWithOrderBooks(market types.Market, orderBooks map[string]clients.OrderBook, executionSize float64, maxSlippagePercent float64) *types.ArbitrageOpportunity {
+	return CheckDutchBookWithOrderBooksMinProfit(market, orderBooks, executionSize, maxSlippagePercent, 0.001)
+}
+
+func CheckDutchBookWithOrderBooksMinProfit(market types.Market, orderBooks map[string]clients.OrderBook, executionSize float64, maxSlippagePercent float64, minProfit float64) *types.ArbitrageOpportunity {
 	if !isBinaryMarket(market) {
 		return nil
 	}
@@ -202,7 +224,7 @@ func CheckDutchBookWithOrderBooks(market types.Market, orderBooks map[string]cli
 	feeCost := fees.CalculatePolymarketFee(grossProfit, market)
 	netProfit := grossProfit - feeCost
 
-	if netProfit < 0.001 {
+	if netProfit < minProfit {
 		return nil
 	}
 

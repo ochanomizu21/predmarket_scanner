@@ -63,6 +63,7 @@ var (
 	fetchOffset    int
 	fetchStartRank int
 	fetchEndRank   int
+	scanWorkers    int
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -95,6 +96,7 @@ func init() {
 	ScanCmd.Flags().StringVar(&historicalTime, "time", "", "Target historical timestamp (RFC3339 format, e.g., 2026-02-28T00:00:00+01:00)")
 	ScanCmd.Flags().StringVar(&timeRange, "time-range", "", "Time range for historical scanning (RFC3339 start,end)")
 	ScanCmd.Flags().StringVar(&dbPath, "db", "data/history.db", "Path to SQLite database for historical data")
+	ScanCmd.Flags().IntVar(&scanWorkers, "workers", 4, "Number of concurrent workers for historical scanning")
 	ExportCmd.Flags().StringVarP(&exportFormat, "format", "f", "json", "Export format (json or csv)")
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
 	RecordCmd.Flags().IntVarP(&recordInterval, "interval", "i", 60, "Recording interval in seconds")
@@ -262,67 +264,113 @@ func runScan(cmd *cobra.Command, args []string) error {
 				fmt.Printf("Scanning markets: offset=%d, limit=%d\n", offset, limit)
 			}
 
+			if scanWorkers <= 0 {
+				scanWorkers = 4
+			}
+			fmt.Printf("Using %d concurrent workers\n", scanWorkers)
+
+			type timestampResult struct {
+				timestamp    time.Time
+				opportunities []types.ArbitrageOpportunity
+				err          error
+			}
+
+			taskChan := make(chan time.Time, len(timestamps))
+			resultChan := make(chan timestampResult, len(timestamps))
+
+			var wg sync.WaitGroup
+
+			for w := 0; w < scanWorkers; w++ {
+				wg.Add(1)
+				go func(workerID int) {
+					defer wg.Done()
+					workerDB, err := database.Open(dbPath)
+					if err != nil {
+						return
+					}
+					defer workerDB.Close()
+
+					for ts := range taskChan {
+						provider = providers.NewHistoricalDataProvider(workerDB, ts, offset)
+						markets, err := provider.FetchMarkets(scanMaxMarkets)
+						if err != nil {
+							resultChan <- timestampResult{timestamp: ts, err: err}
+							continue
+						}
+
+						var opportunities []types.ArbitrageOpportunity
+						switch strategyType {
+						case "dutch_book":
+							if skipSlippage {
+								opportunities = strategies.FindOpportunitiesNoSlippage(markets, minProfit)
+							} else {
+								opportunities = strategies.FindOpportunitiesWithSizeAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
+							}
+						case "multi_outcome":
+							if skipSlippage {
+								opportunities = strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
+							} else {
+								opportunities = strategies.FindMultiOutcomeOpportunitiesAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
+							}
+						case "all":
+							if skipSlippage {
+								dutchBookOpps := strategies.FindOpportunitiesNoSlippage(markets, minProfit)
+								multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
+								opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+							} else {
+								dutchBookOpps := strategies.FindOpportunitiesWithSizeAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
+								multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
+								opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+							}
+						default:
+							resultChan <- timestampResult{timestamp: ts, err: fmt.Errorf("invalid strategy: %s", strategyType)}
+							continue
+						}
+
+						resultChan <- timestampResult{timestamp: ts, opportunities: opportunities}
+					}
+				}(w)
+			}
+
+			for _, ts := range timestamps {
+				taskChan <- ts
+			}
+			close(taskChan)
+
+			go func() {
+				wg.Wait()
+				close(resultChan)
+			}()
+
 			var allOpportunities []types.ArbitrageOpportunity
+			completed := 0
+			for result := range resultChan {
+				completed++
+				if completed%10 == 0 || completed == len(timestamps) {
+					fmt.Printf("\rProgress: %d/%d timestamps", completed, len(timestamps))
+				}
 
-			for i, ts := range timestamps {
-				fmt.Printf("\n[%d/%d] Scanning at %s...\n", i+1, len(timestamps), ts.Format("2006-01-02 15:04:05"))
-
-				provider = providers.NewHistoricalDataProvider(db, ts, offset)
-				markets, err := provider.FetchMarkets(scanMaxMarkets)
-				if err != nil {
-					fmt.Printf("Error fetching markets at %s: %v\n", ts.Format("2006-01-02 15:04:05"), err)
+				if result.err != nil {
+					fmt.Printf("\nError at %s: %v\n", result.timestamp.Format("2006-01-02 15:04:05"), result.err)
 					continue
 				}
 
-			var opportunities []types.ArbitrageOpportunity
-			switch strategyType {
-			case "dutch_book":
-				if skipSlippage {
-					opportunities = strategies.FindOpportunitiesNoSlippage(markets, minProfit)
-				} else {
-					opportunities = strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
-				}
-			case "multi_outcome":
-				if skipSlippage {
-					opportunities = strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
-				} else {
-					opportunities = strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
-				}
-			case "all":
-				if skipSlippage {
-					dutchBookOpps := strategies.FindOpportunitiesNoSlippage(markets, minProfit)
-					multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
-					opportunities = append(dutchBookOpps, multiOutcomeOpps...)
-				} else {
-					dutchBookOpps := strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
-					multiOutcomeOpps := strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
-					opportunities = append(dutchBookOpps, multiOutcomeOpps...)
-				}
-			default:
-				return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
-			}
-
-				for _, opp := range opportunities {
+				for _, opp := range result.opportunities {
 					if opp.NetProfit >= minProfit {
 						allOpportunities = append(allOpportunities, opp)
 					}
 				}
 			}
 
-			fmt.Printf("\nTotal opportunities across %d timestamps: %d\n", len(timestamps), len(allOpportunities))
+			fmt.Printf("\n\nTotal opportunities across %d timestamps: %d\n", len(timestamps), len(allOpportunities))
 
-			var filtered []types.ArbitrageOpportunity
-			for _, opp := range allOpportunities {
-				if opp.NetProfit >= minProfit {
-					filtered = append(filtered, opp)
-				}
-				if len(filtered) >= scanLimit {
-					break
-				}
+			displayCount := scanLimit
+			if len(allOpportunities) < displayCount {
+				displayCount = len(allOpportunities)
 			}
 
-			fmt.Printf("\nFound %d opportunities (top %d displayed)\n", len(allOpportunities), len(filtered))
-			output.PrintOpportunities(filtered)
+			fmt.Printf("\nFound %d opportunities (top %d displayed)\n", len(allOpportunities), displayCount)
+			output.PrintOpportunities(allOpportunities[:displayCount])
 			return nil
 		}
 
@@ -387,13 +435,13 @@ func runScan(cmd *cobra.Command, args []string) error {
 		if skipSlippage {
 			opportunities = strategies.FindOpportunitiesNoSlippage(markets, minProfit)
 		} else {
-			opportunities = strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+			opportunities = strategies.FindOpportunitiesWithSizeAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
 		}
 	case "multi_outcome":
 		if skipSlippage {
 			opportunities = strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
 		} else {
-			opportunities = strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+			opportunities = strategies.FindMultiOutcomeOpportunitiesAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
 		}
 	case "all":
 		if skipSlippage {
@@ -401,26 +449,16 @@ func runScan(cmd *cobra.Command, args []string) error {
 			multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
 			opportunities = append(dutchBookOpps, multiOutcomeOpps...)
 		} else {
-			dutchBookOpps := strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
-			multiOutcomeOpps := strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+			dutchBookOpps := strategies.FindOpportunitiesWithSizeAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
+			multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
 			opportunities = append(dutchBookOpps, multiOutcomeOpps...)
 		}
 	default:
 		return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
 	}
 
-	var filtered []types.ArbitrageOpportunity
-	for _, opp := range opportunities {
-		if opp.NetProfit >= minProfit {
-			filtered = append(filtered, opp)
-		}
-		if len(filtered) >= scanLimit {
-			break
-		}
-	}
-
-	fmt.Printf("\nFound %d opportunities\n", len(filtered))
-	output.PrintOpportunities(filtered)
+	fmt.Printf("\nFound %d opportunities\n", len(opportunities))
+	output.PrintOpportunities(opportunities)
 
 	return nil
 }
@@ -460,12 +498,12 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	switch strategyType {
 	case "dutch_book":
-		opportunities = strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
+		opportunities = strategies.FindOpportunitiesWithSizeAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
 	case "multi_outcome":
-		opportunities = strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+		opportunities = strategies.FindMultiOutcomeOpportunitiesAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
 	case "all":
-		dutchBookOpps := strategies.FindOpportunitiesWithSize(markets, executionSize, maxSlippage)
-		multiOutcomeOpps := strategies.FindMultiOutcomeOpportunities(markets, executionSize, maxSlippage)
+		dutchBookOpps := strategies.FindOpportunitiesWithSizeAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
+		multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
 		opportunities = append(dutchBookOpps, multiOutcomeOpps...)
 	default:
 		return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)

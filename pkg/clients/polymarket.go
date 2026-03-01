@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ochanomizu/predmarket-scanner/pkg/types"
@@ -93,9 +94,17 @@ func (c *PolymarketClient) FetchMarketsFilter(limit, minOutcomes, maxOutcomes in
 }
 
 func (c *PolymarketClient) FetchMarketsFilterOffset(limit, offset, minOutcomes, maxOutcomes int, includeClosed bool) ([]types.Market, error) {
-	gammaMarkets, err := c.fetchGammaMarketsWithLimitOffset(limit, offset, includeClosed)
+	fetchLimit := limit
+	if limit > 0 {
+		fetchLimit = limit + offset
+	}
+	gammaMarkets, err := c.fetchGammaMarketsConcurrent(fetchLimit, includeClosed)
 	if err != nil {
 		return nil, fmt.Errorf("fetching gamma markets: %w", err)
+	}
+
+	if offset > 0 && offset < len(gammaMarkets) {
+		gammaMarkets = gammaMarkets[offset:]
 	}
 
 	var markets []types.Market
@@ -177,6 +186,127 @@ func (c *PolymarketClient) fetchGammaMarketsWithLimitOffset(maxMarkets, offset i
 		}
 
 		offset += fetchLimit
+	}
+
+	if maxMarkets > 0 && len(allMarkets) > maxMarkets {
+		allMarkets = allMarkets[:maxMarkets]
+	}
+
+	return allMarkets, nil
+}
+
+func (c *PolymarketClient) fetchGammaMarketsConcurrent(maxMarkets int, includeClosed bool) ([]GammaMarket, error) {
+	fetchLimit := 500
+	closedParam := "true"
+	if !includeClosed {
+		closedParam = "false"
+	}
+
+	firstURL := fmt.Sprintf("%s/markets?limit=%d&offset=%d&closed=%s", gammaAPIBase, fetchLimit, 0, closedParam)
+	resp, err := c.httpClient.Get(firstURL)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	var firstBatch []GammaMarket
+	if err := json.Unmarshal(body, &firstBatch); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	}
+
+	if len(firstBatch) == 0 {
+		return nil, nil
+	}
+
+	totalMarkets := len(firstBatch)
+
+	if maxMarkets > 0 && totalMarkets >= maxMarkets {
+		if maxMarkets > 0 && len(firstBatch) > maxMarkets {
+			firstBatch = firstBatch[:maxMarkets]
+		}
+		return firstBatch, nil
+	}
+
+	if len(firstBatch) < fetchLimit {
+		if maxMarkets > 0 && len(firstBatch) > maxMarkets {
+			firstBatch = firstBatch[:maxMarkets]
+		}
+		return firstBatch, nil
+	}
+
+	numBatches := 2
+	if maxMarkets > 0 {
+		numBatches = (maxMarkets / fetchLimit) + 1
+	} else {
+		numBatches = 100
+	}
+
+	type batchResult struct {
+		markets []GammaMarket
+		err     error
+	}
+
+	results := make([]batchResult, numBatches)
+	results[0] = batchResult{markets: firstBatch}
+
+	var wg sync.WaitGroup
+	for batchIdx := 1; batchIdx < numBatches; batchIdx++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			offset := idx * fetchLimit
+			url := fmt.Sprintf("%s/markets?limit=%d&offset=%d&closed=%s", gammaAPIBase, fetchLimit, offset, closedParam)
+
+			resp, err := c.httpClient.Get(url)
+			if err != nil {
+				results[idx] = batchResult{err: fmt.Errorf("HTTP request failed: %w", err)}
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				results[idx] = batchResult{err: fmt.Errorf("API returned status %d", resp.StatusCode)}
+				return
+			}
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				results[idx] = batchResult{err: fmt.Errorf("reading response body: %w", err)}
+				return
+			}
+
+			var markets []GammaMarket
+			if err := json.Unmarshal(body, &markets); err != nil {
+				results[idx] = batchResult{err: fmt.Errorf("unmarshaling response: %w", err)}
+				return
+			}
+
+			results[idx] = batchResult{markets: markets}
+		}(batchIdx)
+	}
+
+	wg.Wait()
+
+	var allMarkets []GammaMarket
+	allMarkets = append(allMarkets, firstBatch...)
+
+	for i := 1; i < numBatches; i++ {
+		if results[i].err != nil {
+			continue
+		}
+		if len(results[i].markets) == 0 {
+			break
+		}
+		allMarkets = append(allMarkets, results[i].markets...)
 	}
 
 	if maxMarkets > 0 && len(allMarkets) > maxMarkets {

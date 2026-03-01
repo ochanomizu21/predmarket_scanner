@@ -10,11 +10,18 @@ import (
 )
 
 func FindMultiOutcomeOpportunities(markets []types.Market, executionSize, maxSlippagePercent float64) []types.ArbitrageOpportunity {
+	return FindMultiOutcomeOpportunitiesAndMinProfit(markets, executionSize, maxSlippagePercent, 0.001, 0)
+}
+
+func FindMultiOutcomeOpportunitiesAndMinProfit(markets []types.Market, executionSize, maxSlippagePercent, minProfit float64, limit int) []types.ArbitrageOpportunity {
 	var opportunities []types.ArbitrageOpportunity
 
 	for _, market := range markets {
-		if opp := checkMultiOutcomeWithSlippage(market, executionSize, maxSlippagePercent); opp != nil {
+		if opp := checkMultiOutcomeWithSlippageMinProfit(market, executionSize, maxSlippagePercent, minProfit); opp != nil {
 			opportunities = append(opportunities, *opp)
+			if limit > 0 && len(opportunities) >= limit {
+				break
+			}
 		}
 	}
 
@@ -22,11 +29,18 @@ func FindMultiOutcomeOpportunities(markets []types.Market, executionSize, maxSli
 }
 
 func FindMultiOutcomeOpportunitiesNoSlippage(markets []types.Market, minProfit float64) []types.ArbitrageOpportunity {
+	return FindMultiOutcomeOpportunitiesNoSlippageLimit(markets, minProfit, 0)
+}
+
+func FindMultiOutcomeOpportunitiesNoSlippageLimit(markets []types.Market, minProfit float64, limit int) []types.ArbitrageOpportunity {
 	var opportunities []types.ArbitrageOpportunity
 
 	for _, market := range markets {
 		if opp := checkMultiOutcomeNoSlippage(market, minProfit); opp != nil {
 			opportunities = append(opportunities, *opp)
+			if limit > 0 && len(opportunities) >= limit {
+				break
+			}
 		}
 	}
 
@@ -48,6 +62,10 @@ func isMultiOutcomeMarket(market types.Market) bool {
 }
 
 func checkMultiOutcomeWithSlippage(market types.Market, executionSize, maxSlippagePercent float64) *types.ArbitrageOpportunity {
+	return checkMultiOutcomeWithSlippageMinProfit(market, executionSize, maxSlippagePercent, 0.001)
+}
+
+func checkMultiOutcomeWithSlippageMinProfit(market types.Market, executionSize, maxSlippagePercent float64, minProfit float64) *types.ArbitrageOpportunity {
 	if !isMultiOutcomeMarket(market) {
 		return nil
 	}
@@ -65,7 +83,7 @@ func checkMultiOutcomeWithSlippage(market types.Market, executionSize, maxSlippa
 	feeCost := fees.CalculatePolymarketFee(grossProfit, market)
 	netProfit := grossProfit - feeCost
 
-	if netProfit < 0.001 {
+	if netProfit < minProfit {
 		return nil
 	}
 
@@ -97,6 +115,10 @@ func checkMultiOutcomeWithSlippage(market types.Market, executionSize, maxSlippa
 }
 
 func CheckMultiOutcomeWithOrderBooks(market types.Market, orderBooks map[string]clients.OrderBook, executionSize, maxSlippagePercent float64) *types.ArbitrageOpportunity {
+	return CheckMultiOutcomeWithOrderBooksMinProfit(market, orderBooks, executionSize, maxSlippagePercent, 0.001)
+}
+
+func CheckMultiOutcomeWithOrderBooksMinProfit(market types.Market, orderBooks map[string]clients.OrderBook, executionSize, maxSlippagePercent float64, minProfit float64) *types.ArbitrageOpportunity {
 	if !isMultiOutcomeMarket(market) {
 		return nil
 	}
@@ -150,7 +172,7 @@ func CheckMultiOutcomeWithOrderBooks(market types.Market, orderBooks map[string]
 	feeCost := fees.CalculatePolymarketFee(grossProfit, market)
 	netProfit := grossProfit - feeCost
 
-	if netProfit < 0.001 {
+	if netProfit < minProfit {
 		return nil
 	}
 

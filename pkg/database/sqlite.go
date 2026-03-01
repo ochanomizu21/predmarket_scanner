@@ -476,3 +476,73 @@ func (d *DB) FetchMarketsAtTime(targetTime time.Time, maxMarkets, offset int) ([
 
 	return markets, nil
 }
+
+func (d *DB) FetchMarketsWithOutcomesAtTime(targetTime time.Time, maxMarkets, offset int) ([]providers.MarketWithOutcomes, error) {
+	query := `
+		WITH latest_snapshots AS (
+			SELECT s.id, s.market_id, s.timestamp,
+				ROW_NUMBER() OVER (PARTITION BY s.market_id ORDER BY s.timestamp DESC) as rn
+			FROM snapshots s
+			WHERE datetime(s.timestamp) <= datetime(?)
+		)
+		SELECT m.id, m.question, m.end_time, m.liquidity, m.volume,
+			os.outcome_name, os.best_bid, os.best_ask
+		FROM markets m
+		JOIN latest_snapshots ls ON ls.market_id = m.id AND ls.rn = 1
+		JOIN outcomes_snapshot os ON os.snapshot_id = ls.id
+		ORDER BY m.liquidity DESC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := d.Query(query, targetTime.Format("2006-01-02 15:04:05"), maxMarkets, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	marketMap := make(map[string]*providers.MarketWithOutcomes)
+
+	for rows.Next() {
+		var marketID, question, endTimeStr string
+		var liquidity, volume float64
+		var outcomeName string
+		var bestBid, bestAsk float64
+
+		if err := rows.Scan(&marketID, &question, &endTimeStr, &liquidity, &volume, &outcomeName, &bestBid, &bestAsk); err != nil {
+			return nil, err
+		}
+
+		if _, exists := marketMap[marketID]; !exists {
+			var endTime *time.Time
+			if endTimeStr != "" {
+				t, err := time.Parse(time.RFC3339, endTimeStr)
+				if err == nil {
+					endTime = &t
+				}
+			}
+			marketMap[marketID] = &providers.MarketWithOutcomes{
+				MarketData: providers.MarketData{
+					ID:        marketID,
+					Question:  question,
+					EndTime:   endTime,
+					Liquidity: liquidity,
+					Volume:    volume,
+				},
+				Outcomes: nil,
+			}
+		}
+
+		marketMap[marketID].Outcomes = append(marketMap[marketID].Outcomes, providers.OutcomeData{
+			Name:    outcomeName,
+			BestBid: bestBid,
+			BestAsk: bestAsk,
+		})
+	}
+
+	result := make([]providers.MarketWithOutcomes, 0, len(marketMap))
+	for _, m := range marketMap {
+		result = append(result, *m)
+	}
+
+	return result, nil
+}
