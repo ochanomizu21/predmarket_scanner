@@ -68,7 +68,7 @@ For more detailed information, please refer to:
 
 - **[CLI Reference](CLI.md)**: Full command list and flag descriptions.
 - **[Arbitrage Strategies](DOCS/STRATEGIES.md)**: Deep dive into the logic, examples, and planned strategies.
-- **[Development & Implementation](DOCS/DEVELOPMENT.md)**: Architecture details, database schema, and technical roadmap.
+- **[Implementation Plan](DOCS/IMPLEMENTATION_PLAN_0.md)**: WebSocket integration and storage overhaul roadmap.
 
 ---
 
