@@ -35,6 +35,7 @@ type Market struct {
 	Volume      float64    `json:"volume"`
 	EndTime     *time.Time `json:"end_time,omitempty"`
 	ClobTokenIDs []string  `json:"clob_token_ids,omitempty"`
+	FeeRateBPS  *float64   `json:"fee_rate_bps,omitempty"`
 }
 
 type Outcome struct {

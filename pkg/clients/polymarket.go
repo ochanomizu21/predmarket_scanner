@@ -46,6 +46,7 @@ type GammaMarket struct {
 	BestBid       float64         `json:"bestBid"`
 	BestAsk       float64         `json:"bestAsk"`
 	Spread        float64         `json:"spread"`
+	FeeRateBPS    *float64        `json:"feeRateBps"`
 }
 
 type JSONStringSlice []string
@@ -342,6 +343,7 @@ func (c *PolymarketClient) convertMarket(gammaMarket GammaMarket) (types.Market,
 		Volume:      volume,
 		EndTime:     endTime,
 		ClobTokenIDs: gammaMarket.ClobTokenIDs,
+		FeeRateBPS:  gammaMarket.FeeRateBPS,
 	}, true
 }
 

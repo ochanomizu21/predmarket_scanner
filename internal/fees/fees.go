@@ -5,12 +5,21 @@ import (
 )
 
 var (
-	FeeRateBPS     = 625
-	ApplyFees      = true
+	DefaultFeeRateBPS = 0
+	ApplyFees        = true
 )
 
 func CalculatePolymarketFee(profit float64, market types.Market) float64 {
 	if !ApplyFees || profit <= 0 {
+		return 0
+	}
+
+	feeRateBPS := DefaultFeeRateBPS
+	if market.FeeRateBPS != nil {
+		feeRateBPS = int(*market.FeeRateBPS)
+	}
+
+	if feeRateBPS <= 0 {
 		return 0
 	}
 
@@ -22,7 +31,7 @@ func CalculatePolymarketFee(profit float64, market types.Market) float64 {
 		avgPrice /= float64(len(market.Outcomes))
 	}
 
-	feeRate := float64(FeeRateBPS) / 10000.0
+	feeRate := float64(feeRateBPS) / 10000.0
 	effectiveFeeRate := feeRate * avgPrice * (1 - avgPrice)
 
 	return profit * effectiveFeeRate
