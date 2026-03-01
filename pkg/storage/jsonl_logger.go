@@ -105,14 +105,14 @@ func (l *JSONLLogger) processMessages(ctx context.Context) {
 			return
 		case data := <-l.messageChan:
 			l.mu.Lock()
-			if l.file != nil {
+			if l.writer != nil {
 				lineToWrite := append(data, '\n')
-				if _, err := l.file.Write(lineToWrite); err != nil {
+				if _, err := l.writer.Write(lineToWrite); err != nil {
 					log.Printf("Write error: %v\n", err)
 				} else {
 					messageCount++
 					if messageCount%100 == 0 {
-						l.file.Sync()
+						l.writer.Flush()
 					}
 				}
 			}
