@@ -489,31 +489,84 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	var opportunities []types.ArbitrageOpportunity
 
-	switch strategyType {
-	case "dutch_book":
-		if skipSlippage {
+	if !skipSlippage {
+		fmt.Println("Fetching order books for slippage calculation...")
+
+		var allTokenIDs []string
+		marketTokenIDs := make(map[int][]string)
+		for i, m := range markets {
+			if len(m.ClobTokenIDs) > 0 {
+				marketTokenIDs[i] = m.ClobTokenIDs
+				allTokenIDs = append(allTokenIDs, m.ClobTokenIDs...)
+			}
+		}
+
+		orderBooks, err := provider.FetchOrderBooks(allTokenIDs)
+		if err != nil {
+			fmt.Printf("Warning: Failed to fetch order books: %v\n", err)
+			fmt.Println("Falling back to price-only calculation...")
+		} else {
+			fmt.Printf("Fetched %d order books\n", len(orderBooks))
+		}
+
+		orderBookGetter := func(tokenIDs []string) (map[string]clients.OrderBook, error) {
+			result := make(map[string]clients.OrderBook)
+			for _, tid := range tokenIDs {
+				if ob, ok := orderBooks[tid]; ok {
+					result[tid] = ob
+				}
+			}
+			return result, nil
+		}
+
+		switch strategyType {
+		case "dutch_book":
+			opps, err := strategies.FindOpportunitiesWithOrderBooks(markets, orderBookGetter, executionSize, maxSlippage)
+			if err != nil {
+				return fmt.Errorf("finding opportunities: %w", err)
+			}
+			opportunities = opps
+		case "multi_outcome":
+			opps, err := strategies.FindMultiOutcomeOpportunitiesWithOrderBooks(markets, orderBookGetter, executionSize, maxSlippage)
+			if err != nil {
+				return fmt.Errorf("finding opportunities: %w", err)
+			}
+			opportunities = opps
+		case "all":
+			dutchBookOpps, _ := strategies.FindOpportunitiesWithOrderBooks(markets, orderBookGetter, executionSize, maxSlippage)
+			multiOutcomeOpps, _ := strategies.FindMultiOutcomeOpportunitiesWithOrderBooks(markets, orderBookGetter, executionSize, maxSlippage)
+			opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+		default:
+			return fmt.Errorf("invalid strategy: %s", strategyType)
+		}
+
+		var filtered []types.ArbitrageOpportunity
+		for _, opp := range opportunities {
+			if opp.NetProfit >= minProfit {
+				filtered = append(filtered, opp)
+			}
+			if len(filtered) >= scanLimit {
+				break
+			}
+		}
+		opportunities = filtered
+	} else {
+		switch strategyType {
+		case "dutch_book":
 			opportunities = strategies.FindOpportunitiesNoSlippage(markets, minProfit)
-		} else {
-			opportunities = strategies.FindOpportunitiesWithSizeAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
-		}
-	case "multi_outcome":
-		if skipSlippage {
+		case "multi_outcome":
 			opportunities = strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
-		} else {
-			opportunities = strategies.FindMultiOutcomeOpportunitiesAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
-		}
-	case "all":
-		if skipSlippage {
+		case "all":
 			dutchBookOpps := strategies.FindOpportunitiesNoSlippage(markets, minProfit)
 			multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
 			opportunities = append(dutchBookOpps, multiOutcomeOpps...)
-		} else {
-			dutchBookOpps := strategies.FindOpportunitiesWithSizeAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
-			multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesAndMinProfit(markets, executionSize, maxSlippage, minProfit, scanLimit)
-			opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+		default:
+			return fmt.Errorf("invalid strategy: %s", strategyType)
 		}
-	default:
-		return fmt.Errorf("invalid strategy: %s (must be 'all', 'dutch_book', or 'multi_outcome')", strategyType)
+
+		if len(opportunities) > scanLimit {
+			opportunities = opportunities[:scanLimit]
+		}
 	}
 
 	if scanExportOpps != "" {
