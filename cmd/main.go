@@ -18,6 +18,7 @@ func main() {
 	rootCmd.AddCommand(ExportCmd)
 	rootCmd.AddCommand(RecordCmd)
 	rootCmd.AddCommand(FetchHistoryCmd)
+	rootCmd.AddCommand(ConvertParquetCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)

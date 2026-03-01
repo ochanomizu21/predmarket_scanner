@@ -78,6 +78,8 @@ var (
 	scanUseOrderBook       bool
 	scanMode               string
 	scanScanInterval       int
+	convertDate            string
+	convertAllDays         bool
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -137,6 +139,8 @@ func init() {
 	FetchHistoryCmd.Flags().IntVar(&historyEndRank, "end-rank", 0, "End rank (inclusive, 0 = unlimited)")
 	FetchHistoryCmd.Flags().IntVar(&historyWorkers, "workers", 10, "Number of concurrent workers for fetching")
 	FetchHistoryCmd.Flags().BoolVar(&historySkipExisting, "skip-existing", false, "Skip markets that already have price history")
+	ConvertParquetCmd.Flags().StringVar(&convertDate, "date", "", "Date to convert (YYYY-MM-DD format, or empty for all)")
+	ConvertParquetCmd.Flags().BoolVar(&convertAllDays, "all", false, "Convert all available days")
 }
 
 func runFetchMarkets(cmd *cobra.Command, args []string) error {
@@ -698,6 +702,13 @@ var FetchHistoryCmd = &cobra.Command{
 	RunE:  runFetchHistory,
 }
 
+var ConvertParquetCmd = &cobra.Command{
+	Use:   "convert-parquet",
+	Short: "Convert JSONL to Parquet",
+	Long:  "Convert gzipped JSONL files to Parquet format for efficient storage and query",
+	RunE:  runConvertParquet,
+}
+
 func runExport(cmd *cobra.Command, args []string) error {
 	fmt.Println("Fetching markets...")
 
@@ -1071,4 +1082,33 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Data saved to: %s\n", dbPath)
 
 	return nil
+}
+
+func runConvertParquet(cmd *cobra.Command, args []string) error {
+	converter := storage.NewParquetConverter("data")
+
+	if convertAllDays {
+		fmt.Println("Converting all available days...")
+		if err := converter.ConvertAllAvailableDays(); err != nil {
+			return fmt.Errorf("converting all days: %w", err)
+		}
+		fmt.Println("Conversion complete!")
+		return nil
+	}
+
+	if convertDate != "" {
+		_, err := time.Parse("2006-01-02", convertDate)
+		if err != nil {
+			return fmt.Errorf("invalid date format: %w (expected YYYY-MM-DD)", err)
+		}
+		fmt.Printf("Converting data for %s...\n", convertDate)
+		if err := converter.ConvertDay(convertDate); err != nil {
+			return fmt.Errorf("converting day %s: %w", convertDate, err)
+		}
+		fmt.Printf("Successfully converted %s to Parquet\n", convertDate)
+		return nil
+	}
+
+	fmt.Println("Please specify --date or --all flag")
+	return fmt.Errorf("no date specified")
 }

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ type JSONLLogger struct {
 	dataDir     string
 	currentDate string
 	file        *os.File
+	gzipWriter  *gzip.Writer
 	writer      *bufio.Writer
 	messageChan chan []byte
 	done        chan struct{}
@@ -55,6 +57,9 @@ func (l *JSONLLogger) Stop() {
 	l.mu.Lock()
 	if l.writer != nil {
 		l.writer.Flush()
+	}
+	if l.gzipWriter != nil {
+		l.gzipWriter.Close()
 	}
 	if l.file != nil {
 		l.file.Close()
@@ -147,13 +152,16 @@ func (l *JSONLLogger) rotateFileLocked() error {
 	if l.writer != nil {
 		l.writer.Flush()
 	}
+	if l.gzipWriter != nil {
+		l.gzipWriter.Close()
+	}
 
 	if l.file != nil {
 		l.file.Close()
 	}
 
 	currentDate := time.Now().UTC().Format("2006-01-02")
-	filename := filepath.Join(l.dataDir, fmt.Sprintf("market_data_%s.jsonl", currentDate))
+	filename := filepath.Join(l.dataDir, fmt.Sprintf("market_data_%s.jsonl.gz", currentDate))
 
 	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -161,7 +169,8 @@ func (l *JSONLLogger) rotateFileLocked() error {
 	}
 
 	l.file = file
-	l.writer = bufio.NewWriterSize(file, 64*1024)
+	l.gzipWriter = gzip.NewWriter(file)
+	l.writer = bufio.NewWriterSize(l.gzipWriter, 64*1024)
 	l.currentDate = currentDate
 
 	return nil
@@ -174,6 +183,9 @@ func (l *JSONLLogger) Flush() {
 	if l.writer != nil {
 		l.writer.Flush()
 	}
+	if l.gzipWriter != nil {
+		l.gzipWriter.Flush()
+	}
 }
 
 func (l *JSONLLogger) GetCurrentFilename() string {
@@ -183,5 +195,5 @@ func (l *JSONLLogger) GetCurrentFilename() string {
 	if l.currentDate == "" {
 		return ""
 	}
-	return filepath.Join(l.dataDir, fmt.Sprintf("market_data_%s.jsonl", l.currentDate))
+	return filepath.Join(l.dataDir, fmt.Sprintf("market_data_%s.jsonl.gz", l.currentDate))
 }

@@ -2,6 +2,7 @@ package providers
 
 import (
 	"bufio"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -47,11 +48,16 @@ func (p *JSONLHistoricalProvider) GetAvailableDates() ([]time.Time, error) {
 		}
 
 		name := entry.Name()
-		if len(name) < 15 || name[:13] != "market_data_" || name[len(name)-6:] != ".jsonl" {
+		var dateStr string
+
+		if len(name) >= 18 && name[:13] == "market_data_" && name[len(name)-9:] == ".jsonl.gz" {
+			dateStr = name[13 : len(name)-9]
+		} else if len(name) >= 15 && name[:13] == "market_data_" && name[len(name)-6:] == ".jsonl" {
+			dateStr = name[13 : len(name)-6]
+		} else {
 			continue
 		}
 
-		dateStr := name[13 : len(name)-6]
 		t, err := time.Parse("2006-01-02", dateStr)
 		if err == nil {
 			dates = append(dates, t)
@@ -67,16 +73,45 @@ func (p *JSONLHistoricalProvider) GetAvailableDates() ([]time.Time, error) {
 
 func (p *JSONLHistoricalProvider) GetSnapshotsAtTime(targetTime time.Time) ([]HistoricalSnapshot, error) {
 	dateStr := targetTime.Format("2006-01-02")
-	filename := filepath.Join(p.dataDir, fmt.Sprintf("market_data_%s.jsonl", dateStr))
 
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("opening JSONL file: %w", err)
+	gzFilename := filepath.Join(p.dataDir, fmt.Sprintf("market_data_%s.jsonl.gz", dateStr))
+	jsonlFilename := filepath.Join(p.dataDir, fmt.Sprintf("market_data_%s.jsonl", dateStr))
+
+	var file *os.File
+	var err error
+	var isGzipped bool
+
+	if _, statErr := os.Stat(gzFilename); statErr == nil {
+		file, err = os.Open(gzFilename)
+		if err != nil {
+			return nil, fmt.Errorf("opening gzipped JSONL file: %w", err)
+		}
+		isGzipped = true
+	} else {
+		file, err = os.Open(jsonlFilename)
+		if err != nil {
+			return nil, fmt.Errorf("opening JSONL file: %w", err)
+		}
+		isGzipped = false
 	}
 	defer file.Close()
 
 	var snapshots []HistoricalSnapshot
-	scanner := bufio.NewScanner(file)
+	var scanner *bufio.Scanner
+
+	if isGzipped {
+		gz, err := gzip.NewReader(file)
+		if err != nil {
+			return nil, fmt.Errorf("opening gzip reader: %w", err)
+		}
+		defer gz.Close()
+		scanner = bufio.NewScanner(gz)
+	} else {
+		scanner = bufio.NewScanner(file)
+	}
+
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 10*1024*1024)
 
 	for scanner.Scan() {
 		var data map[string]interface{}
