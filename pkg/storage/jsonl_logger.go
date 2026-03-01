@@ -25,6 +25,8 @@ type JSONLLogger struct {
 	droppedCount  int64
 	writtenCount  int64
 	lastStatsTime time.Time
+	attemptCount  int64
+	receivedCount int64
 }
 
 type LogMessage struct {
@@ -88,6 +90,10 @@ func (l *JSONLLogger) Log(message map[string]interface{}) error {
 }
 
 func (l *JSONLLogger) LogRaw(data []byte) error {
+	l.mu.Lock()
+	l.attemptCount++
+	l.mu.Unlock()
+
 	select {
 	case l.messageChan <- data:
 		return nil
@@ -111,6 +117,9 @@ func (l *JSONLLogger) processMessages(ctx context.Context) {
 			l.Stop()
 			return
 		case data := <-l.messageChan:
+			l.mu.Lock()
+			l.receivedCount++
+			l.mu.Unlock()
 			l.mu.Lock()
 			if l.writer != nil {
 				lineToWrite := append(data, '\n')
@@ -163,10 +172,23 @@ func (l *JSONLLogger) printStats(ctx context.Context) {
 		case <-ticker.C:
 			l.mu.Lock()
 			channelLen := len(l.messageChan)
+			attempts := l.attemptCount
+			written := l.writtenCount
+			dropped := l.droppedCount
+			received := l.receivedCount
 			l.mu.Unlock()
 
-			fmt.Printf("Logger Stats - Written: %d | Dropped: %d | Channel buffer: %d/10000 | File: %s\n",
-				l.writtenCount, l.droppedCount, channelLen, l.GetCurrentFilename())
+			successRate := float64(0)
+			receiveRate := float64(0)
+			if attempts > 0 {
+				successRate = float64(written) / float64(attempts) * 100
+			}
+			if attempts > 0 {
+				receiveRate = float64(received) / float64(attempts) * 100
+			}
+
+			fmt.Printf("Logger Stats - Attempts: %d | Received: %d (%.1f%%) | Written: %d (%.1f%%) | Dropped: %d | Channel: %d/10000 | File: %s\n",
+				attempts, received, receiveRate, written, successRate, dropped, channelLen, l.GetCurrentFilename())
 		}
 	}
 }
