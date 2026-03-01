@@ -63,13 +63,23 @@ func (l *JSONLLogger) Stop() {
 	l.mu.Lock()
 	if l.writer != nil {
 		l.writer.Flush()
+		log.Printf("Flushed bufio writer\n")
+		l.writer = nil
 	}
 	if l.gzipWriter != nil {
+		l.gzipWriter.Flush()
+		log.Printf("Flushed gzip writer\n")
 		l.gzipWriter.Close()
+		log.Printf("Closed gzip writer\n")
+		l.gzipWriter = nil
 	}
 	if l.file != nil {
+		l.file.Sync()
 		l.file.Close()
+		log.Printf("Closed file: %s\n", l.GetCurrentFilename())
+		l.file = nil
 	}
+	log.Printf("Logger stopped. Total written: %d\n", l.writtenCount)
 	l.mu.Unlock()
 }
 
@@ -130,6 +140,17 @@ func (l *JSONLLogger) processMessages(ctx context.Context) {
 					l.writtenCount++
 					if messageCount%100 == 0 {
 						l.writer.Flush()
+						if l.gzipWriter != nil {
+							l.gzipWriter.Flush()
+						}
+						if l.file != nil {
+							l.file.Sync()
+						}
+						if messageCount%1000 == 0 {
+							if stat, err := l.file.Stat(); err == nil {
+								log.Printf("Flushed %d messages, file size: %d bytes\n", messageCount, stat.Size())
+							}
+						}
 					}
 				}
 			}
@@ -202,13 +223,16 @@ func (l *JSONLLogger) rotateFile() error {
 func (l *JSONLLogger) rotateFileLocked() error {
 	if l.writer != nil {
 		l.writer.Flush()
+		l.writer = nil
 	}
 	if l.gzipWriter != nil {
 		l.gzipWriter.Close()
+		l.gzipWriter = nil
 	}
-
 	if l.file != nil {
+		l.file.Sync()
 		l.file.Close()
+		l.file = nil
 	}
 
 	currentDate := time.Now().UTC().Format("2006-01-02")
@@ -236,6 +260,9 @@ func (l *JSONLLogger) Flush() {
 	}
 	if l.gzipWriter != nil {
 		l.gzipWriter.Flush()
+	}
+	if l.file != nil {
+		l.file.Sync()
 	}
 }
 
