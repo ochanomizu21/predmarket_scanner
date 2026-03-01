@@ -182,12 +182,18 @@ func (pc *ParquetConverter) ConvertDayWithContext(ctx context.Context, date stri
 	return nil
 }
 
+
 func (pc *ParquetConverter) ConvertAllAvailableDays() error {
 	ctx := context.Background()
-	return pc.ConvertAllAvailableDaysWithContext(ctx)
+	return pc.ConvertAllAvailableDaysWithContext(ctx, false)
 }
 
-func (pc *ParquetConverter) ConvertAllAvailableDaysWithContext(ctx context.Context) error {
+func (pc *ParquetConverter) ConvertAllAvailableDaysAndDelete() error {
+	ctx := context.Background()
+	return pc.ConvertAllAvailableDaysWithContext(ctx, true)
+}
+
+func (pc *ParquetConverter) ConvertAllAvailableDaysWithContext(ctx context.Context, deleteAfter bool) error {
 	entries, err := os.ReadDir(pc.dataDir)
 	if err != nil {
 		return fmt.Errorf("reading data directory: %w", err)
@@ -217,8 +223,10 @@ func (pc *ParquetConverter) ConvertAllAvailableDaysWithContext(ctx context.Conte
 			continue
 		}
 
-		if err := pc.DeleteJSONL(dateStr); err != nil {
-			fmt.Printf("Warning: failed to delete JSONL for %s: %v\n", dateStr, err)
+		if deleteAfter {
+			if err := pc.DeleteJSONL(dateStr); err != nil {
+				fmt.Printf("Warning: failed to delete JSONL for %s: %v\n", dateStr, err)
+			}
 		}
 	}
 

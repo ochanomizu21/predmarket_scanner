@@ -80,6 +80,7 @@ var (
 	scanScanInterval       int
 	convertDate            string
 	convertAllDays         bool
+	convertDeleteSource    bool
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -141,6 +142,7 @@ func init() {
 	FetchHistoryCmd.Flags().BoolVar(&historySkipExisting, "skip-existing", false, "Skip markets that already have price history")
 	ConvertParquetCmd.Flags().StringVar(&convertDate, "date", "", "Date to convert (YYYY-MM-DD format, or empty for all)")
 	ConvertParquetCmd.Flags().BoolVar(&convertAllDays, "all", false, "Convert all available days")
+	ConvertParquetCmd.Flags().BoolVar(&convertDeleteSource, "delete", false, "Delete JSONL files after successful conversion")
 }
 
 func runFetchMarkets(cmd *cobra.Command, args []string) error {
@@ -1089,7 +1091,13 @@ func runConvertParquet(cmd *cobra.Command, args []string) error {
 
 	if convertAllDays {
 		fmt.Println("Converting all available days...")
-		if err := converter.ConvertAllAvailableDays(); err != nil {
+		var err error
+		if convertDeleteSource {
+			err = converter.ConvertAllAvailableDaysAndDelete()
+		} else {
+			err = converter.ConvertAllAvailableDays()
+		}
+		if err != nil {
 			return fmt.Errorf("converting all days: %w", err)
 		}
 		fmt.Println("Conversion complete!")
