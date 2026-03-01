@@ -14,6 +14,7 @@ predmarket-scanner [command] [flags]
 - `scan` - Scan for arbitrage opportunities
 - `export` - Export opportunities to file
 - `record` - Record historical market data (daemon)
+- `convert-parquet` - Convert JSONL files to Parquet format
 - `fetch-history` - Fetch historical price data from Polymarket API
 - `completion` - Generate autocompletion script for your shell
 
@@ -130,14 +131,19 @@ predmarket-scanner scan [flags]
 | `-l, --limit` | int | 100 | Maximum number of opportunities to display |
 | `--max-markets` | int | 0 (all) | Maximum number of markets to fetch |
 | `--strategy` | string | all | Strategy to use: `all`, `dutch_book`, `multi_outcome` |
+| `--mode` | string | rest | Scan mode: `rest` (API polling), `event-driven` (WebSocket trigger), `periodic` (WebSocket interval) |
+| `--scan-interval` | int | 1 | Scan interval in seconds (for periodic mode) |
 | `--historical` | bool | false | Enable historical backtesting mode |
 | `--time` | string | "" | Target historical timestamp (RFC3339 format) |
 | `--time-range` | string | "" | Time range for historical scanning (format: start,end) |
 | `--db` | string | data/history.db | Path to SQLite database for historical data |
 | `--workers` | int | 4 | Number of concurrent workers for historical scanning |
 | `--skip-slippage` | bool | false | Skip order book fetch and slippage calculation |
+| `--use-order-book` | bool | false | Use real order book prices (best ask) instead of Gamma API prices |
+| `--closed` | bool | false | Include closed/resolved markets |
 | `--no-fees` | bool | false | Ignore Polymarket fees (for non-crypto markets) |
 | `--detailed` | bool | false | Show detailed output with score breakdown |
+| `--all-snapshots` | bool | false | Scan all available snapshots in database |
 | `--output` | string | "" | Export markets to JSON file (for debugging) |
 | `--export-opps` | string | "" | Export opportunities to JSON file |
 | `--debug` | bool | false | Enable debug output (show all markets checked) |
@@ -150,11 +156,14 @@ predmarket-scanner scan [flags]
 # Basic scan with default settings (REST polling)
 ./bin/predmarket-scanner scan
 
-# Scan with WebSocket event-driven mode
+# Scan with WebSocket event-driven mode (reacts to order book changes)
 ./bin/predmarket-scanner scan --mode event-driven
 
-# Scan with WebSocket periodic mode (every 2 seconds)
+# Scan with WebSocket periodic mode (scan every 2 seconds)
 ./bin/predmarket-scanner scan --mode periodic --scan-interval 2
+
+# Scan with WebSocket periodic mode using real order book prices
+./bin/predmarket-scanner scan --mode periodic --scan-interval 1 --use-order-book
 
 # Scan with $500 size
 ./bin/predmarket-scanner scan --size 500
@@ -183,6 +192,14 @@ predmarket-scanner scan [flags]
 # Debug: export raw markets and show all checked
 ./bin/predmarket-scanner scan --output markets.json --debug
 ```
+
+**Scan Mode Comparison:**
+
+| Mode | Behavior | Latency | CPU Usage | Best For |
+|------|-----------|----------|------------|-----------|
+| `rest` | Polls API periodically (every scan) | High (~1-2s) | Low | Simple use cases |
+| `event-driven` | Scans immediately when WebSocket order book updates | Very Low (~100ms) | Medium | Reacting to fast market moves |
+| `periodic` | Scans at fixed intervals using WebSocket order book | Medium (configurable) | Low-Medium | Regular monitoring without API limits |
 
 **Historical Backtesting:**
 
@@ -335,13 +352,79 @@ predmarket-scanner record --offset 1000 --max-markets 500
 
 ### Data Storage
 
-All recorded data is stored in `data/` directory as daily JSONL files (`market_data_YYYYMMDD.jsonl`).
+All recorded data is stored in `data/` directory as daily compressed JSONL files (`market_data_YYYY-MM-DD.jsonl.gz`).
 
-**Note:** This command now uses WebSocket for real-time data recording, providing zero-latency tick-by-tick order book updates.
+**Note:** This command uses WebSocket for real-time data recording, providing zero-latency tick-by-tick order book updates. Data is automatically compressed with gzip for efficient storage (10-20x compression ratio).
+
+### Converting to Parquet (Optional)
+
+After recording, you can convert JSONL files to Parquet format for even better compression and faster querying:
+
+```bash
+# Convert a single day to Parquet
+./bin/predmarket-scanner convert-parquet --date 2026-03-01
+
+# Convert all available days to Parquet
+./bin/predmarket-scanner convert-parquet --all
+
+# Convert and delete original JSONL files (saves space)
+./bin/predmarket-scanner convert-parquet --all --delete
+```
+
+**Storage Comparison:**
+- Original JSON (uncompressed): ~200-300 MB/day (500 markets)
+- Compressed JSONL (gzip): ~10-20 MB/day (10-20x compression)
+- Parquet (columnar): ~2-5 MB/day (additional 5-10x compression)
 
 ### Stopping the Daemon
 
 Press `Ctrl+C` to gracefully stop the recording daemon.
+
+---
+
+## `convert-parquet`
+
+Convert compressed JSONL files to Parquet format for efficient archival and faster querying.
+
+### Usage
+
+```bash
+predmarket-scanner convert-parquet [flags]
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--date` | string | "" | Date to convert in `YYYY-MM-DD` format (or empty for all) |
+| `--all` | bool | false | Convert all available days |
+| `--delete` | bool | false | Delete JSONL files after successful conversion |
+
+### Examples
+
+```bash
+# Convert a specific day to Parquet
+./bin/predmarket-scanner convert-parquet --date 2026-03-01
+
+# Convert all available days
+./bin/predmarket-scanner convert-parquet --all
+
+# Convert all and delete original JSONL files to save space
+./bin/predmarket-scanner convert-parquet --all --delete
+```
+
+### Output
+
+```
+Converting 2026-03-01...
+Converted 50000 records...
+Original: 167755 bytes, Compressed: 23421 bytes (ratio: 7.2x)
+```
+
+**Storage Savings:**
+- JSONL (gzip): ~15 MB/day
+- Parquet (Snappy): ~2 MB/day
+- **Total compression: ~85x reduction vs uncompressed JSON**
 
 ---
 
