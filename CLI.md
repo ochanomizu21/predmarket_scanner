@@ -126,7 +126,6 @@ predmarket-scanner scan [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-s, --size` | float | 1000 | Execution size in USDC |
-| `--max-slippage` | float | 5.0 | Maximum slippage in percent |
 | `-p, --min-profit` | float | 0.001 | Minimum profit threshold |
 | `-l, --limit` | int | 100 | Maximum number of opportunities to display |
 | `--max-markets` | int | 0 (all) | Maximum number of markets to fetch |
@@ -151,8 +150,8 @@ predmarket-scanner scan [flags]
 # Basic scan with default settings
 predmarket-scanner scan
 
-# Scan with $500 size and 1% max slippage
-predmarket-scanner scan --size 500 --max-slippage 1
+# Scan with $500 size
+predmarket-scanner scan --size 500
 
 # Scan only for Dutch book opportunities
 predmarket-scanner scan --strategy dutch_book
@@ -161,12 +160,12 @@ predmarket-scanner scan --strategy dutch_book
 predmarket-scanner scan --strategy multi_outcome
 
 # Tight filters with high profit threshold
-predmarket-scanner scan --size 100 --max-slippage 0.5 --min-profit 0.01
+predmarket-scanner scan --size 100 --min-profit 0.01
 
 # Limit to first 1000 markets
 predmarket-scanner scan --max-markets 1000 --limit 20
 
-# Skip order book fetch for faster scanning
+# Skip order book fetch for faster scanning (no slippage calculation)
 predmarket-scanner scan --skip-slippage
 
 # Show score breakdown
@@ -206,9 +205,9 @@ predmarket-scanner scan --historical --time-range "..." --no-fees
 |--------|-------------|
 | Market | Market question |
 | Gross % | Theoretical profit before fees and slippage |
-| Net % | Actual profit after fees (price-dependent) and slippage |
+| Net % | Actual profit after fees and calculated slippage |
 | Fee % | Polymarket trading fees (most markets are fee-free, only 15-min crypto/Serie A/NCAAB have fees) |
-| Slip % | Price impact from order book depth |
+| Slip % | Calculated price impact from order book depth (based on --size) |
 | Liq $ | Available market liquidity in USDC |
 | Score | Risk-adjusted score (higher = better) |
 
@@ -444,7 +443,7 @@ predmarket-scanner scan --strategy multi_outcome --max-markets 1000
 ## Tips
 
 1. **Use `--max-markets` to limit scanning time** - The full market dataset is ~34K markets, which can take several minutes to scan with order books.
-2. **Adjust `--size` for your trading capital** - Smaller sizes have less slippage but lower absolute profits.
+2. **Adjust `--size` to test different execution sizes** - The slippage shown is based on this size.
 3. **Use `--min-profit` to filter low-quality opportunities** - Set higher values (e.g., 0.01 for 1%) to focus on better trades.
 4. **Start recording data early** - Historical backtesting requires data. Run `record` in the background to build your dataset.
 5. **Combine with export for analysis** - Export opportunities and analyze in your preferred tool (Excel, Python, etc.).
