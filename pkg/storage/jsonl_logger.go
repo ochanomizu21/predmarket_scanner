@@ -14,14 +14,17 @@ import (
 )
 
 type JSONLLogger struct {
-	dataDir     string
-	currentDate string
-	file        *os.File
-	gzipWriter  *gzip.Writer
-	writer      *bufio.Writer
-	messageChan chan []byte
-	done        chan struct{}
-	mu          sync.Mutex
+	dataDir       string
+	currentDate   string
+	file          *os.File
+	gzipWriter    *gzip.Writer
+	writer        *bufio.Writer
+	messageChan   chan []byte
+	done          chan struct{}
+	mu            sync.Mutex
+	droppedCount  int64
+	writtenCount  int64
+	lastStatsTime time.Time
 }
 
 type LogMessage struct {
@@ -48,6 +51,7 @@ func (l *JSONLLogger) Start(ctx context.Context) error {
 
 	go l.processMessages(ctx)
 	go l.dailyRotation(ctx)
+	go l.printStats(ctx)
 
 	return nil
 }
@@ -88,7 +92,10 @@ func (l *JSONLLogger) LogRaw(data []byte) error {
 	case l.messageChan <- data:
 		return nil
 	default:
-		fmt.Printf("Logger message channel full, dropping message of %d bytes\n", len(data))
+		l.mu.Lock()
+		l.droppedCount++
+		l.mu.Unlock()
+		fmt.Printf("Logger message channel full, dropping message of %d bytes (total dropped: %d)\n", len(data), l.droppedCount)
 		return fmt.Errorf("message channel full, dropping message")
 	}
 }
@@ -111,6 +118,7 @@ func (l *JSONLLogger) processMessages(ctx context.Context) {
 					log.Printf("Write error: %v\n", err)
 				} else {
 					messageCount++
+					l.writtenCount++
 					if messageCount%100 == 0 {
 						l.writer.Flush()
 					}
@@ -138,6 +146,27 @@ func (l *JSONLLogger) dailyRotation(ctx context.Context) {
 				l.rotateFileLocked()
 				l.mu.Unlock()
 			}
+		}
+	}
+}
+
+func (l *JSONLLogger) printStats(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-l.done:
+			return
+		case <-ticker.C:
+			l.mu.Lock()
+			channelLen := len(l.messageChan)
+			l.mu.Unlock()
+
+			fmt.Printf("Logger Stats - Written: %d | Dropped: %d | Channel buffer: %d/10000 | File: %s\n",
+				l.writtenCount, l.droppedCount, channelLen, l.GetCurrentFilename())
 		}
 	}
 }
