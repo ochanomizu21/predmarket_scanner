@@ -44,7 +44,7 @@ type OrderBookLevel struct {
 }
 
 type PriceHistoryPoint struct {
-	Timestamp   time.Time
+	Timestamp  time.Time
 	Price      float64
 	TokenID    string
 	OrderCount int
@@ -67,21 +67,22 @@ type Database interface {
 	GetOrderBookLevels(snapshotID int64, tokenID, side string) ([]OrderBookLevel, error)
 	FetchMarketsAtTime(targetTime time.Time, maxMarkets, offset int) ([]MarketData, error)
 	FetchMarketsWithOutcomesAtTime(targetTime time.Time, maxMarkets, offset int) ([]MarketWithOutcomes, error)
+	FetchMarketsWithOrderBookAtTime(targetTime time.Time, maxMarkets, offset int) ([]MarketWithOutcomes, error)
 	GetTimestampsInRange(startTime, endTime time.Time) ([]time.Time, error)
 }
 
 type LiveDataProvider struct {
-	client *clients.PolymarketClient
-	offset int
-	limit  int
+	client        *clients.PolymarketClient
+	offset        int
+	limit         int
 	includeClosed bool
 }
 
 func NewLiveDataProvider(offset, limit int, includeClosed bool) *LiveDataProvider {
 	return &LiveDataProvider{
-		client: clients.NewPolymarketClient(),
-		offset: offset,
-		limit:  limit,
+		client:        clients.NewPolymarketClient(),
+		offset:        offset,
+		limit:         limit,
 		includeClosed: includeClosed,
 	}
 }
@@ -113,9 +114,10 @@ func (p *LiveDataProvider) FetchOrderBooks(tokenIDs []string) (map[string]client
 }
 
 type HistoricalDataProvider struct {
-	db         Database
-	targetTime time.Time
-	offset     int
+	db           Database
+	targetTime   time.Time
+	offset       int
+	useOrderBook bool
 }
 
 func NewHistoricalDataProvider(db Database, targetTime time.Time, offset int) *HistoricalDataProvider {
@@ -126,10 +128,29 @@ func NewHistoricalDataProvider(db Database, targetTime time.Time, offset int) *H
 	}
 }
 
+func NewHistoricalDataProviderWithOrderBook(db Database, targetTime time.Time, offset int) *HistoricalDataProvider {
+	return &HistoricalDataProvider{
+		db:           db,
+		targetTime:   targetTime,
+		offset:       offset,
+		useOrderBook: true,
+	}
+}
+
 func (p *HistoricalDataProvider) FetchMarkets(maxMarkets int) ([]types.Market, error) {
-	marketData, err := p.db.FetchMarketsWithOutcomesAtTime(p.targetTime, maxMarkets, p.offset)
-	if err != nil {
-		return nil, err
+	var marketData []MarketWithOutcomes
+	var err error
+
+	if p.useOrderBook {
+		marketData, err = p.db.FetchMarketsWithOrderBookAtTime(p.targetTime, maxMarkets, p.offset)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		marketData, err = p.db.FetchMarketsWithOutcomesAtTime(p.targetTime, maxMarkets, p.offset)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	markets := make([]types.Market, 0, len(marketData))
@@ -147,8 +168,8 @@ func (p *HistoricalDataProvider) FetchMarkets(maxMarkets int) ([]types.Market, e
 		for _, o := range md.Outcomes {
 			m.Outcomes = append(m.Outcomes, types.Outcome{
 				Name:           o.Name,
-				Price:          o.BestAsk,
-				Side:           types.Ask,
+				Price:          o.BestBid,
+				Side:           types.Bid,
 				OrderBookDepth: 0,
 			})
 		}

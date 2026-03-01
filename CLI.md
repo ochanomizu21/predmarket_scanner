@@ -147,54 +147,63 @@ predmarket-scanner scan [flags]
 **Live Scanning:**
 
 ```bash
-# Basic scan with default settings
-predmarket-scanner scan
+# Basic scan with default settings (REST polling)
+./bin/predmarket-scanner scan
+
+# Scan with WebSocket event-driven mode
+./bin/predmarket-scanner scan --mode event-driven
+
+# Scan with WebSocket periodic mode (every 2 seconds)
+./bin/predmarket-scanner scan --mode periodic --scan-interval 2
 
 # Scan with $500 size
-predmarket-scanner scan --size 500
+./bin/predmarket-scanner scan --size 500
 
 # Scan only for Dutch book opportunities
-predmarket-scanner scan --strategy dutch_book
+./bin/predmarket-scanner scan --strategy dutch_book
 
 # Scan only for Multi-Outcome opportunities
-predmarket-scanner scan --strategy multi_outcome
+./bin/predmarket-scanner scan --strategy multi_outcome
 
 # Tight filters with high profit threshold
-predmarket-scanner scan --size 100 --min-profit 0.01
+./bin/predmarket-scanner scan --size 100 --min-profit 0.01
 
 # Limit to first 1000 markets
-predmarket-scanner scan --max-markets 1000 --limit 20
+./bin/predmarket-scanner scan --max-markets 1000 --limit 20
 
 # Skip order book fetch for faster scanning (no slippage calculation)
-predmarket-scanner scan --skip-slippage
+./bin/predmarket-scanner scan --skip-slippage
 
 # Show score breakdown
-predmarket-scanner scan --detailed
+./bin/predmarket-scanner scan --detailed
 
 # Export opportunities to file
-predmarket-scanner scan --export-opps opportunities.json
+./bin/predmarket-scanner scan --export-opps opportunities.json
 
 # Debug: export raw markets and show all checked
-predmarket-scanner scan --output markets.json --debug
+./bin/predmarket-scanner scan --output markets.json --debug
 ```
 
 **Historical Backtesting:**
 
 ```bash
+# Start recording market data using WebSocket
+./bin/predmarket-scanner record --max-markets 500
+
 # Scan data from a specific point in time (RFC3339 format with timezone)
-predmarket-scanner scan --historical --time "2026-02-28T12:00:00+01:00"
+./bin/predmarket-scanner scan --historical --time "2026-02-28T12:00:00+01:00"
 
 # Use a custom database path
-predmarket-scanner scan --historical --time "2026-02-28T12:00:00+01:00" --db /path/to/history.db
+./bin/predmarket-scanner scan --historical --time "2026-02-28T12:00:00+01:00" --db /path/to/history.db
 
 # Scan across a time range
-predmarket-scanner scan --historical --time-range "2026-02-28T00:00:00+01:00,2026-02-28T23:59:59+01:00"
+./bin/predmarket-scanner scan --historical --time-range "2026-02-28T00:00:00+01:00,2026-02-28T23:59:59+01:00"
 
 # Use multiple workers for faster scanning
-predmarket-scanner scan --historical --time-range "..." --workers 8
+./bin/predmarket-scanner scan --historical --time-range "..." --workers 8
 
 # Scan without fees (for non-crypto markets)
-predmarket-scanner scan --historical --time-range "..." --no-fees
+./bin/predmarket-scanner scan --historical --time-range "..." --no-fees
 ```
 
 ### Output Columns
@@ -290,7 +299,7 @@ market_id,question,strategy,gross_profit,net_profit,score
 
 ## `record`
 
-Run as a daemon to continuously record market snapshots to SQLite database for historical backtesting.
+Run as a daemon to continuously record market data using WebSocket to JSONL files for historical backtesting.
 
 ### Usage
 
@@ -302,49 +311,33 @@ predmarket-scanner record [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-i, --interval` | int | 60 | Recording interval in seconds |
+| `-i, --interval` | int | 60 | **Deprecated** - Kept for backward compatibility, but recording is now continuous |
 | `--max-markets` | int | 500 | Maximum number of markets to record |
 | `--offset` | int | 0 | Skip first N markets (by liquidity) |
 | `--start-rank` | int | 0 | Start rank (1-based, inclusive) |
 | `--end-rank` | int | 0 | End rank (inclusive, 0 = unlimited) |
-| `--order-book` | bool | true | Include full order book data |
-| `--order-book-levels` | int | 10 | Number of order book levels per side (1-20) |
 
 ### Examples
 
 ```bash
-# Record every 60 seconds (default)
+# Record top 500 markets (default)
 predmarket-scanner record
 
-# Record every 10 seconds for faster data collection
-predmarket-scanner record --interval 10
-
-# Record top 100 most liquid markets only
+# Record top 100 most liquid markets
 predmarket-scanner record --max-markets 100
-
-# Record every 30 seconds with 200 markets
-predmarket-scanner record --interval 30 --max-markets 200
 
 # Record markets 101-500 (by liquidity ranking)
 predmarket-scanner record --start-rank 101 --end-rank 500
 
-# Record prices only (no order book, uses fewer API calls)
-predmarket-scanner record --order-book=false
-
-# Record with only top 3 order book levels (reduces storage & API calls)
-predmarket-scanner record --order-book-levels=3
+# Skip first 1000 markets, record next 500
+predmarket-scanner record --offset 1000 --max-markets 500
 ```
 
 ### Data Storage
 
-All recorded data is stored in `data/history.db` (or custom path specified in scan command).
+All recorded data is stored in `data/` directory as daily JSONL files (`market_data_YYYYMMDD.jsonl`).
 
-**Database Schema:**
-
-- `markets` - Market metadata (ID, question, end time, liquidity, volume)
-- `snapshots` - Timestamped market snapshots
-- `outcomes_snapshot` - Outcome prices per snapshot
-- `order_book_levels` - Full order book depth per snapshot
+**Note:** This command now uses WebSocket for real-time data recording, providing zero-latency tick-by-tick order book updates.
 
 ### Stopping the Daemon
 
@@ -413,19 +406,11 @@ predmarket-scanner export --format json --output results
 ### Historical Research
 
 ```bash
-# Fetch historical price data from Polymarket API (one-time backfill)
-predmarket-scanner fetch-history --interval 1d --max-days 30
-
-# Start recording live data
-predmarket-scanner record --interval 30 --max-markets 500
+# Start recording live data using WebSocket
+./bin/predmarket-scanner record --max-markets 500
 
 # After recording, analyze specific time periods
-predmarket-scanner scan --historical --time "2026-02-28 12:30:00" --strategy all
-
-# Compare multiple time points
-predmarket-scanner scan --historical --time "2026-02-28 00:00:00" --limit 20
-predmarket-scanner scan --historical --time "2026-02-28 12:00:00" --limit 20
-predmarket-scanner scan --historical --time "2026-02-28 23:00:00" --limit 20
+./bin/predmarket-scanner scan --historical --time "2026-02-28 12:30:00" --strategy all
 ```
 
 ### Strategy-Specific Analysis

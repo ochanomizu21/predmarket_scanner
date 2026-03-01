@@ -20,6 +20,9 @@ bin/
 # Data
 data/*.db
 data/*.sqlite
+data/*.db-journal
+data/*.jsonl
+data/*.parquet
 
 # Exports
 *.json

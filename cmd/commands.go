@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,8 +15,10 @@ import (
 	"github.com/ochanomizu/predmarket-scanner/pkg/database"
 	"github.com/ochanomizu/predmarket-scanner/pkg/output"
 	"github.com/ochanomizu/predmarket-scanner/pkg/providers"
+	"github.com/ochanomizu/predmarket-scanner/pkg/storage"
 	"github.com/ochanomizu/predmarket-scanner/pkg/strategies"
 	"github.com/ochanomizu/predmarket-scanner/pkg/types"
+	"github.com/ochanomizu/predmarket-scanner/pkg/websocket"
 	"github.com/spf13/cobra"
 )
 
@@ -25,50 +30,54 @@ func skipSlippageStr() string {
 }
 
 var (
-	fetchLimit      int
-	fetchMaxMarkets int
-	fetchMinOutcomes int
-	fetchMaxOutcomes int
-	fetchIncludeClosed bool
-	minProfit       float64
-	scanLimit       int
-	scanMaxMarkets  int
-	scanOffset      int
-	scanStartRank   int
-	scanEndRank     int
-	executionSize   float64
-	skipSlippage   bool
-	strategyType    string
-	exportFormat    string
-	exportOutput    string
-	recordInterval  int
-	recordMaxMarkets int
-	recordOffset     int
-	recordStartRank  int
-	recordEndRank    int
-	historicalMode  bool
-	historicalTime  string
-	timeRange      string
-	dbPath         string
-	historyLimit   int
-	historyMaxDays int
-	historyInterval string
-	historyOffset    int
-	historyStartRank int
-	historyEndRank   int
-	historyWorkers  int
-	historySkipExisting bool
+	fetchLimit             int
+	fetchMaxMarkets        int
+	fetchMinOutcomes       int
+	fetchMaxOutcomes       int
+	fetchIncludeClosed     bool
+	minProfit              float64
+	scanLimit              int
+	scanMaxMarkets         int
+	scanOffset             int
+	scanStartRank          int
+	scanEndRank            int
+	executionSize          float64
+	skipSlippage           bool
+	strategyType           string
+	exportFormat           string
+	exportOutput           string
+	recordInterval         int
+	recordMaxMarkets       int
+	recordOffset           int
+	recordStartRank        int
+	recordEndRank          int
+	historicalMode         bool
+	historicalTime         string
+	timeRange              string
+	dbPath                 string
+	historyLimit           int
+	historyMaxDays         int
+	historyInterval        string
+	historyOffset          int
+	historyStartRank       int
+	historyEndRank         int
+	historyWorkers         int
+	historySkipExisting    bool
 	recordIncludeOrderBook bool
 	recordOrderBookLevels  int
-	fetchOffset    int
-	fetchStartRank int
-	fetchEndRank   int
-	scanWorkers    int
-	scanDebug      bool
-	scanExportOpps string
-	scanNoFees    bool
-	scanDetailed  bool
-	scanClosed    bool
+	fetchOffset            int
+	fetchStartRank         int
+	fetchEndRank           int
+	scanWorkers            int
+	scanDebug              bool
+	scanExportOpps         string
+	scanNoFees             bool
+	scanDetailed           bool
+	scanClosed             bool
+	scanAllSnapshots       bool
+	scanUseOrderBook       bool
+	scanMode               string
+	scanScanInterval       int
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -107,6 +116,10 @@ func init() {
 	ScanCmd.Flags().BoolVar(&scanNoFees, "no-fees", false, "Ignore Polymarket fees (for markets without trading fees)")
 	ScanCmd.Flags().BoolVar(&scanDetailed, "detailed", false, "Show detailed output with score breakdown")
 	ScanCmd.Flags().BoolVar(&scanClosed, "closed", false, "Include closed/resolved markets")
+	ScanCmd.Flags().BoolVar(&scanAllSnapshots, "all-snapshots", false, "Scan all available snapshots in database")
+	ScanCmd.Flags().BoolVar(&scanUseOrderBook, "use-order-book", false, "Use real order book prices (best ask) instead of Gamma API prices")
+	ScanCmd.Flags().StringVar(&scanMode, "mode", "rest", "Scan mode: rest (API polling), event-driven (WebSocket trigger), periodic (WebSocket interval)")
+	ScanCmd.Flags().IntVar(&scanScanInterval, "scan-interval", 1, "Scan interval in seconds (for periodic mode)")
 	ExportCmd.Flags().StringVarP(&exportFormat, "format", "f", "json", "Export format (json or csv)")
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
 	RecordCmd.Flags().IntVarP(&recordInterval, "interval", "i", 60, "Recording interval in seconds")
@@ -222,8 +235,8 @@ func runScan(cmd *cobra.Command, args []string) error {
 	var provider providers.DataProvider
 
 	if historicalMode {
-		if historicalTime == "" && timeRange == "" {
-			return fmt.Errorf("--time or --time-range is required in historical mode")
+		if historicalTime == "" && timeRange == "" && !scanAllSnapshots {
+			return fmt.Errorf("--time, --time-range, or --all-snapshots is required in historical mode")
 		}
 
 		db, err := database.Open(dbPath)
@@ -231,6 +244,21 @@ func runScan(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("opening database: %w", err)
 		}
 		defer db.Close()
+
+		if scanAllSnapshots {
+			var minTsStr, maxTsStr string
+			err := db.QueryRow(`
+				SELECT MIN(timestamp), MAX(timestamp) FROM snapshots
+			`).Scan(&minTsStr, &maxTsStr)
+			if err != nil {
+				return fmt.Errorf("getting timestamp range: %w", err)
+			}
+			if minTsStr == "" || maxTsStr == "" {
+				return fmt.Errorf("no snapshots found in database")
+			}
+			timeRange = fmt.Sprintf("%s,%s", minTsStr, maxTsStr)
+			fmt.Printf("Using all snapshots from %s to %s\n", minTsStr[:19], maxTsStr[:19])
+		}
 
 		if timeRange != "" {
 			parts := strings.Split(timeRange, ",")
@@ -282,9 +310,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Using %d concurrent workers\n", scanWorkers)
 
 			type timestampResult struct {
-				timestamp    time.Time
+				timestamp     time.Time
 				opportunities []types.ArbitrageOpportunity
-				err          error
+				err           error
 			}
 
 			taskChan := make(chan time.Time, len(timestamps))
@@ -303,7 +331,11 @@ func runScan(cmd *cobra.Command, args []string) error {
 					defer workerDB.Close()
 
 					for ts := range taskChan {
-						provider = providers.NewHistoricalDataProvider(workerDB, ts, offset)
+						if scanUseOrderBook {
+							provider = providers.NewHistoricalDataProviderWithOrderBook(workerDB, ts, offset)
+						} else {
+							provider = providers.NewHistoricalDataProvider(workerDB, ts, offset)
+						}
 						markets, err := provider.FetchMarkets(scanMaxMarkets)
 						if err != nil {
 							resultChan <- timestampResult{timestamp: ts, err: err}
@@ -419,9 +451,17 @@ func runScan(cmd *cobra.Command, args []string) error {
 				fmt.Printf("Scanning markets: offset=%d, limit=%d\n", offset, limit)
 			}
 
-			provider = providers.NewHistoricalDataProvider(db, targetTime, offset)
+			if scanUseOrderBook {
+				provider = providers.NewHistoricalDataProviderWithOrderBook(db, targetTime, offset)
+			} else {
+				provider = providers.NewHistoricalDataProvider(db, targetTime, offset)
+			}
 		}
 	} else {
+		if scanMode == "event-driven" || scanMode == "periodic" {
+			return runWebSocketScan()
+		}
+
 		fmt.Println("Fetching markets from Polymarket...")
 
 		offset := scanOffset
@@ -488,9 +528,16 @@ func runScan(cmd *cobra.Command, args []string) error {
 		executionSize, strategyType, skipSlippageStr())
 
 	var opportunities []types.ArbitrageOpportunity
+	var orderBooks map[string]clients.OrderBook
 
-	if !skipSlippage {
-		fmt.Println("Fetching order books for slippage calculation...")
+	needsLiveOrderBook := !historicalMode && scanUseOrderBook
+
+	if needsLiveOrderBook || (!skipSlippage && !historicalMode) {
+		if needsLiveOrderBook {
+			fmt.Println("Fetching order books for real CLOB prices...")
+		} else {
+			fmt.Println("Fetching order books for slippage calculation...")
+		}
 
 		var allTokenIDs []string
 		marketTokenIDs := make(map[int][]string)
@@ -501,7 +548,8 @@ func runScan(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		orderBooks, err := provider.FetchOrderBooks(allTokenIDs)
+		var err error
+		orderBooks, err = provider.FetchOrderBooks(allTokenIDs)
 		if err != nil {
 			fmt.Printf("Warning: Failed to fetch order books: %v\n", err)
 			fmt.Println("Falling back to price-only calculation...")
@@ -509,6 +557,49 @@ func runScan(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Fetched %d order books\n", len(orderBooks))
 		}
 
+		if scanUseOrderBook && len(orderBooks) > 0 {
+			fmt.Println("Using order book ask prices for arbitrage detection...")
+			updated := 0
+			for i, m := range markets {
+				if len(m.ClobTokenIDs) == 0 || len(m.ClobTokenIDs) != len(m.Outcomes) {
+					continue
+				}
+				for j := range m.Outcomes {
+					tokenID := m.ClobTokenIDs[j]
+					ob, ok := orderBooks[tokenID]
+					if !ok || len(ob.Asks) == 0 {
+						continue
+					}
+					bestAsk, err := strconv.ParseFloat(ob.Asks[0].Price, 64)
+					if err != nil {
+						continue
+					}
+					markets[i].Outcomes[j].Price = bestAsk
+					updated++
+				}
+			}
+			fmt.Printf("Updated %d outcome prices with order book ask prices\n", updated)
+		}
+	}
+
+	if needsLiveOrderBook {
+		switch strategyType {
+		case "dutch_book":
+			opportunities = strategies.FindOpportunitiesNoSlippage(markets, minProfit)
+		case "multi_outcome":
+			opportunities = strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
+		case "all":
+			dutchBookOpps := strategies.FindOpportunitiesNoSlippage(markets, minProfit)
+			multiOutcomeOpps := strategies.FindMultiOutcomeOpportunitiesNoSlippage(markets, minProfit)
+			opportunities = append(dutchBookOpps, multiOutcomeOpps...)
+		default:
+			return fmt.Errorf("invalid strategy: %s", strategyType)
+		}
+
+		if len(opportunities) > scanLimit {
+			opportunities = opportunities[:scanLimit]
+		}
+	} else if !skipSlippage {
 		orderBookGetter := func(tokenIDs []string) (map[string]clients.OrderBook, error) {
 			result := make(map[string]clients.OrderBook)
 			for _, tid := range tokenIDs {
@@ -658,7 +749,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 }
 
 func runRecord(cmd *cobra.Command, args []string) error {
-	fmt.Println("Starting historical data recording daemon...")
+	fmt.Println("Starting WebSocket-based market data recording daemon...")
 
 	offset := recordOffset
 	limit := recordMaxMarkets
@@ -670,121 +761,102 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	db, err := database.Open("data/history.db")
-	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
-	}
-	defer db.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	fmt.Printf("Recording to data/history.db\n")
-	fmt.Printf("Recording interval: %d seconds\n", recordInterval)
-	fmt.Printf("Recording markets: offset=%d, limit=%d\n", offset, limit)
-	fmt.Printf("Order book recording: %v (max %d levels per side)\n", recordIncludeOrderBook, recordOrderBookLevels)
-	fmt.Println("Press Ctrl+C to stop recording...")
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	go func() {
+		<-sigChan
+		fmt.Println("\nReceived interrupt signal, shutting down gracefully...")
+		cancel()
+	}()
 
 	client := clients.NewPolymarketClient()
 
-	for {
-		fmt.Printf("\n[%s] Fetching markets...\n", time.Now().Format(time.RFC3339))
+	fmt.Println("Fetching markets from REST API...")
+	markets, err := client.FetchMarketsFilterOffset(limit, offset, 0, 0, false)
+	if err != nil {
+		return fmt.Errorf("fetching markets: %w", err)
+	}
 
-			markets, err := client.FetchMarketsFilterOffset(limit, offset, 0, 0, false)
-			if err != nil {
-				fmt.Printf("Error fetching markets: %v\n", err)
-				continue
+	fmt.Printf("Fetched %d markets\n", len(markets))
+
+	var allTokenIDs []string
+	for _, market := range markets {
+		allTokenIDs = append(allTokenIDs, market.ClobTokenIDs...)
+	}
+
+	allTokenIDs = uniqueTokenIDs(allTokenIDs)
+	fmt.Printf("Found %d unique token IDs to subscribe to\n", len(allTokenIDs))
+
+	orderBookMgr := types.NewOrderBookManager()
+
+	wsClient := websocket.NewClient(orderBookMgr)
+
+	fmt.Println("Connecting to WebSocket...")
+	if err := wsClient.Connect(ctx); err != nil {
+		return fmt.Errorf("connecting to websocket: %w", err)
+	}
+
+	fmt.Println("Subscribing to markets...")
+	if err := wsClient.Subscribe(allTokenIDs); err != nil {
+		return fmt.Errorf("subscribing to markets: %w", err)
+	}
+
+	logger := storage.NewJSONLLogger("data")
+	if err := logger.Start(ctx); err != nil {
+		return fmt.Errorf("starting logger: %w", err)
+	}
+	defer logger.Stop()
+
+	fmt.Println("Recording market data to JSONL files...")
+	fmt.Println("Press Ctrl+C to stop recording...")
+
+	msgChan := wsClient.GetMessageChannel()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	messageCount := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("\nTotal messages recorded: %d\n", messageCount)
+			logger.Flush()
+			return nil
+
+		case message := <-msgChan:
+			messageCount++
+
+			if err := logger.LogRaw(message); err != nil {
+				fmt.Printf("Logger error: %v\n", err)
 			}
 
-			fmt.Printf("Fetched %d markets\n", len(markets))
-			fmt.Printf("Recording snapshots...\n")
-
-			var recorded int
-			timestamp := time.Now()
-
-			for _, market := range markets {
-				err := db.InsertOrUpdateMarket(
-					market.ID,
-					market.Question,
-					market.EndTime,
-					market.Liquidity,
-					market.Volume,
-					len(market.Outcomes),
-				)
-				if err != nil {
-					fmt.Printf("Error inserting market %s: %v\n", market.ID, err)
-					continue
-				}
-
-				snapshotID, err := db.InsertSnapshot(market.ID, timestamp)
-				if err != nil {
-					fmt.Printf("Error inserting snapshot for market %s: %v\n", market.ID, err)
-					continue
-				}
-
-				for i, outcome := range market.Outcomes {
-					err := db.InsertOutcomeSnapshot(snapshotID, outcome.Name, outcome.Price, outcome.Price)
-					if err != nil {
-						fmt.Printf("Error inserting outcome snapshot for market %s: %v\n", market.ID, err)
-						continue
-					}
-
-					if recordIncludeOrderBook {
-						if i >= len(market.ClobTokenIDs) {
-							continue
-						}
-
-						tokenID := market.ClobTokenIDs[i]
-						if tokenID == "" {
-							continue
-						}
-
-						book, err := client.FetchOrderBook(tokenID)
-						if err != nil {
-							continue
-						}
-
-						bidLevels := make([]providers.OrderBookLevel, 0, recordOrderBookLevels)
-						for i, bid := range book.Bids {
-							if i >= recordOrderBookLevels {
-								break
-							}
-							price, _ := strconv.ParseFloat(bid.Price, 64)
-							size, _ := strconv.ParseFloat(bid.Size, 64)
-							bidLevels = append(bidLevels, providers.OrderBookLevel{Price: price, Size: size})
-						}
-
-						if len(bidLevels) > 0 {
-							err := db.InsertOrderBookLevels(snapshotID, outcome.Name, tokenID, "bid", bidLevels)
-							if err != nil {
-								fmt.Printf("Error inserting bid levels for market %s: %v\n", market.ID, err)
-							}
-						}
-
-						askLevels := make([]providers.OrderBookLevel, 0, recordOrderBookLevels)
-						for i, ask := range book.Asks {
-							if i >= recordOrderBookLevels {
-								break
-							}
-							price, _ := strconv.ParseFloat(ask.Price, 64)
-							size, _ := strconv.ParseFloat(ask.Size, 64)
-							askLevels = append(askLevels, providers.OrderBookLevel{Price: price, Size: size})
-						}
-
-						if len(askLevels) > 0 {
-							err := db.InsertOrderBookLevels(snapshotID, outcome.Name, tokenID, "ask", askLevels)
-							if err != nil {
-								fmt.Printf("Error inserting ask levels for market %s: %v\n", market.ID, err)
-							}
-						}
-					}
-				}
-
-			recorded++
-
-			fmt.Printf("Recorded %d market snapshots\n", recorded)
-
-			fmt.Printf("Waiting %d seconds before next recording...\n", recordInterval)
-			time.Sleep(time.Duration(recordInterval) * time.Second)
+		case <-ticker.C:
+			metrics := wsClient.GetMetrics()
+			messages, bookEvents, priceChanges, connections, reconnections := metrics.GetStats()
+			fmt.Printf("\rMessages: %d | Book Events: %d | Price Changes: %d | Connections: %d | Reconnections: %d",
+				messages, bookEvents, priceChanges, connections, reconnections)
 		}
 	}
+}
+
+func uniqueTokenIDs(tokenIDs []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(tokenIDs))
+
+	for _, id := range tokenIDs {
+		if id == "" {
+			continue
+		}
+		if !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
+
+	return result
 }
 
 func runFetchHistory(cmd *cobra.Command, args []string) error {
@@ -831,9 +903,9 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 	cutoffDate := time.Now().AddDate(0, 0, -historyMaxDays)
 
 	type fetchTask struct {
-		market     types.Market
+		market       types.Market
 		outcomeIndex int
-		tokenID    string
+		tokenID      string
 	}
 
 	var tasks []fetchTask
@@ -849,18 +921,18 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 			}
 
 			tasks = append(tasks, fetchTask{
-				market:     market,
+				market:       market,
 				outcomeIndex: i,
-				tokenID:    tokenID,
+				tokenID:      tokenID,
 			})
 		}
 	}
 
 	type fetchResult struct {
-		success    bool
-		points     int
-		err        error
-		taskIndex  int
+		success   bool
+		points    int
+		err       error
+		taskIndex int
 	}
 
 	taskChan := make(chan fetchTask, len(tasks))
@@ -908,7 +980,7 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 
 					if timestamp.After(cutoffDate) {
 						validPoints = append(validPoints, providers.PriceHistoryPoint{
-							Timestamp:   timestamp,
+							Timestamp:  timestamp,
 							Price:      point.Price,
 							TokenID:    point.TokenID,
 							OrderCount: point.OrderCount,
@@ -934,9 +1006,9 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 
 	for i, task := range tasks {
 		taskChan <- fetchTask{
-			market:     task.market,
+			market:       task.market,
 			outcomeIndex: task.outcomeIndex,
-			tokenID:    task.tokenID,
+			tokenID:      task.tokenID,
 		}
 		i++
 	}
@@ -957,7 +1029,7 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 		completedTasks++
 
 		progress := float64(completedTasks) / float64(len(tasks)) * 100
-		currentMilestone := int(progress / 10) * 10
+		currentMilestone := int(progress/10) * 10
 
 		if currentMilestone > lastProgressMilestone {
 			fmt.Printf("\rProgress: %.1f%% (%d/%d tasks)", progress, completedTasks, len(tasks))
@@ -1000,4 +1072,3 @@ func runFetchHistory(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
-

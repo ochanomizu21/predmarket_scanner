@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ochanomizu/predmarket-scanner/pkg/providers"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/ochanomizu/predmarket-scanner/pkg/providers"
 )
 
 type DB struct {
@@ -536,6 +536,83 @@ func (d *DB) FetchMarketsWithOutcomesAtTime(targetTime time.Time, maxMarkets, of
 			Name:    outcomeName,
 			BestBid: bestBid,
 			BestAsk: bestAsk,
+		})
+	}
+
+	result := make([]providers.MarketWithOutcomes, 0, len(marketMap))
+	for _, m := range marketMap {
+		result = append(result, *m)
+	}
+
+	return result, nil
+}
+
+func (d *DB) FetchMarketsWithOrderBookAtTime(targetTime time.Time, maxMarkets, offset int) ([]providers.MarketWithOutcomes, error) {
+	query := `
+		WITH latest_snapshots AS (
+			SELECT s.id, s.market_id, s.timestamp,
+				ROW_NUMBER() OVER (PARTITION BY s.market_id ORDER BY s.timestamp DESC) as rn
+			FROM snapshots s
+			WHERE datetime(s.timestamp) <= datetime(?)
+		),
+		orderbook_prices AS (
+			SELECT snapshot_id, outcome_name, MIN(price) as best_ask
+			FROM order_book_levels
+			WHERE side = 'ask'
+			GROUP BY snapshot_id, outcome_name
+		)
+		SELECT m.id, m.question, m.end_time, m.liquidity, m.volume,
+			os.outcome_name, COALESCE(op.best_ask, os.best_bid) as price
+		FROM markets m
+		JOIN latest_snapshots ls ON ls.market_id = m.id AND ls.rn = 1
+		JOIN outcomes_snapshot os ON os.snapshot_id = ls.id
+		LEFT JOIN orderbook_prices op ON op.snapshot_id = ls.id AND op.outcome_name = os.outcome_name
+		ORDER BY m.liquidity DESC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := d.Query(query, targetTime.Format("2006-01-02 15:04:05"), maxMarkets, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	marketMap := make(map[string]*providers.MarketWithOutcomes)
+
+	for rows.Next() {
+		var marketID, question, endTimeStr string
+		var liquidity, volume float64
+		var outcomeName string
+		var price float64
+
+		if err := rows.Scan(&marketID, &question, &endTimeStr, &liquidity, &volume, &outcomeName, &price); err != nil {
+			return nil, err
+		}
+
+		if _, exists := marketMap[marketID]; !exists {
+			var endTime *time.Time
+			if endTimeStr != "" {
+				t, err := time.Parse(time.RFC3339, endTimeStr)
+				if err == nil {
+					endTime = &t
+				}
+			}
+			marketMap[marketID] = &providers.MarketWithOutcomes{
+				MarketData: providers.MarketData{
+					ID:        marketID,
+					Question:  question,
+					EndTime:   endTime,
+					Liquidity: liquidity,
+					Volume:    volume,
+				},
+				Outcomes: nil,
+			}
+		}
+
+		marketMap[marketID].Outcomes = append(marketMap[marketID].Outcomes, providers.OutcomeData{
+			Name:    outcomeName,
+			BestBid: price,
+			BestAsk: price,
 		})
 	}
 
