@@ -5,15 +5,26 @@ import (
 )
 
 const (
-	tradingFeeRate = 0.02
-	makerRebate    = 0.0002
+	feeRateBPS = 625
 )
 
-func CalculatePolymarketFee(profit float64, _ types.Market) float64 {
-	fee := profit * tradingFeeRate
-	rebate := profit * makerRebate
+func CalculatePolymarketFee(profit float64, market types.Market) float64 {
+	if profit <= 0 {
+		return 0
+	}
 
-	return fee - rebate
+	var avgPrice float64
+	for _, outcome := range market.Outcomes {
+		avgPrice += outcome.Price
+	}
+	if len(market.Outcomes) > 0 {
+		avgPrice /= float64(len(market.Outcomes))
+	}
+
+	feeRate := float64(feeRateBPS) / 10000.0
+	effectiveFeeRate := feeRate * avgPrice * (1 - avgPrice)
+
+	return profit * effectiveFeeRate
 }
 
 func CalculateNetROI(grossProfit, cost, fees float64) float64 {

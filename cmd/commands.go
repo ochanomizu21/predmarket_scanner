@@ -369,6 +369,17 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 			fmt.Printf("\n\nTotal opportunities across %d timestamps: %d\n", len(timestamps), len(allOpportunities))
 
+			if scanExportOpps != "" {
+				exportPath := scanExportOpps
+				if !strings.HasSuffix(exportPath, ".json") {
+					exportPath += ".json"
+				}
+				if err := output.ExportJSON(allOpportunities, exportPath); err != nil {
+					return fmt.Errorf("exporting opportunities: %w", err)
+				}
+				fmt.Printf("Exported %d opportunities to %s\n", len(allOpportunities), exportPath)
+			}
+
 			displayCount := scanLimit
 			if len(allOpportunities) < displayCount {
 				displayCount = len(allOpportunities)
