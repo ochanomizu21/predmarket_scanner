@@ -11,32 +11,66 @@ import (
 )
 
 func PrintOpportunities(opportunities []types.ArbitrageOpportunity) {
+	PrintOpportunitiesDetailed(opportunities, false)
+}
+
+func PrintOpportunitiesDetailed(opportunities []types.ArbitrageOpportunity, showScoreBreakdown bool) {
 	if len(opportunities) == 0 {
 		fmt.Println("No arbitrage opportunities found.")
 		return
 	}
 
-	fmt.Println("\n=== Arbitrage Opportunities ===\n")
-	fmt.Printf("%-45s %-10s %-10s %-10s %-10s %-10s %-10s\n", "Market", "Gross %", "Net %", "Fee %", "Slip %", "Liq $", "Score")
-	fmt.Println(strings.Repeat("-", 115))
+	if showScoreBreakdown {
+		fmt.Println("\n=== Arbitrage Opportunities (with Score Breakdown) ===\n")
+		fmt.Printf("%-40s %-8s %-8s %-8s %-7s %-8s | %-6s %-6s %-6s %-6s %-6s\n", 
+			"Market", "Gross %", "Net %", "Fee %", "Slip %", "Liq $", "P_Sc", "L_Sc", "V_Sc", "E_Rk", "T_Dc")
+		fmt.Println(strings.Repeat("-", 110))
 
-	limit := len(opportunities)
-	if limit > 20 {
-		limit = 20
-	}
+		limit := len(opportunities)
+		if limit > 20 {
+			limit = 20
+		}
 
-	for i := 0; i < limit; i++ {
-		opp := opportunities[i]
-		question := truncate(opp.Market.Question, 42)
-		fmt.Printf("%-45s %-10.3f %-10.3f %-10.3f %-10.3f %-10.0f %-10.3f\n",
-			question,
-			opp.GrossProfit*100.0,
-			opp.NetProfit*100.0,
-			opp.FeeCost*100.0,
-			opp.SlippageImpact*100.0,
-			opp.AvailableLiquidity,
-			opp.Score,
-		)
+		for i := 0; i < limit; i++ {
+			opp := opportunities[i]
+			question := truncate(opp.Market.Question, 37)
+			fmt.Printf("%-40s %-8.3f %-8.3f %-8.3f %-7.3f %-8.0f | %-6.3f %-6.3f %-6.3f %-6.3f %-6.3f\n",
+				question,
+				opp.GrossProfit*100.0,
+				opp.NetProfit*100.0,
+				opp.FeeCost*100.0,
+				opp.SlippageImpact*100.0,
+				opp.AvailableLiquidity,
+				opp.ScoreFactors.ProfitScore,
+				opp.ScoreFactors.LiquidityScore,
+				opp.ScoreFactors.VolumeScore,
+				opp.ScoreFactors.ExecutionRisk,
+				opp.ScoreFactors.TimeDecay,
+			)
+		}
+	} else {
+		fmt.Println("\n=== Arbitrage Opportunities ===\n")
+		fmt.Printf("%-45s %-10s %-10s %-10s %-10s %-10s %-10s\n", "Market", "Gross %", "Net %", "Fee %", "Slip %", "Liq $", "Score")
+		fmt.Println(strings.Repeat("-", 115))
+
+		limit := len(opportunities)
+		if limit > 20 {
+			limit = 20
+		}
+
+		for i := 0; i < limit; i++ {
+			opp := opportunities[i]
+			question := truncate(opp.Market.Question, 42)
+			fmt.Printf("%-45s %-10.3f %-10.3f %-10.3f %-10.3f %-10.0f %-10.3f\n",
+				question,
+				opp.GrossProfit*100.0,
+				opp.NetProfit*100.0,
+				opp.FeeCost*100.0,
+				opp.SlippageImpact*100.0,
+				opp.AvailableLiquidity,
+				opp.Score,
+			)
+		}
 	}
 
 	if len(opportunities) > 20 {

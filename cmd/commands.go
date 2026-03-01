@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ochanomizu/predmarket-scanner/internal/fees"
 	"github.com/ochanomizu/predmarket-scanner/pkg/clients"
 	"github.com/ochanomizu/predmarket-scanner/pkg/database"
 	"github.com/ochanomizu/predmarket-scanner/pkg/output"
@@ -66,6 +67,8 @@ var (
 	scanWorkers    int
 	scanDebug      bool
 	scanExportOpps string
+	scanNoFees    bool
+	scanDetailed  bool
 )
 
 var FetchMarketsCmd = &cobra.Command{
@@ -102,6 +105,8 @@ func init() {
 	ScanCmd.Flags().StringVar(&exportOutput, "output", "", "Export markets to JSON file (for debugging)")
 	ScanCmd.Flags().BoolVar(&scanDebug, "debug", false, "Enable debug output (show all markets checked)")
 	ScanCmd.Flags().StringVar(&scanExportOpps, "export-opps", "", "Export opportunities to JSON file")
+	ScanCmd.Flags().BoolVar(&scanNoFees, "no-fees", false, "Ignore Polymarket fees (for markets without trading fees)")
+	ScanCmd.Flags().BoolVar(&scanDetailed, "detailed", false, "Show detailed output with score breakdown")
 	ExportCmd.Flags().StringVarP(&exportFormat, "format", "f", "json", "Export format (json or csv)")
 	ExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "opportunities", "Output filename prefix")
 	RecordCmd.Flags().IntVarP(&recordInterval, "interval", "i", 60, "Recording interval in seconds")
@@ -212,6 +217,8 @@ var ScanCmd = &cobra.Command{
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
+	fees.ApplyFees = !scanNoFees
+
 	var provider providers.DataProvider
 
 	if historicalMode {
@@ -386,7 +393,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 			}
 
 			fmt.Printf("\nFound %d opportunities (top %d displayed)\n", len(allOpportunities), displayCount)
-			output.PrintOpportunities(allOpportunities[:displayCount])
+			output.PrintOpportunitiesDetailed(allOpportunities[:displayCount], scanDetailed)
 			return nil
 		}
 
@@ -521,7 +528,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\nFound %d opportunities\n", len(opportunities))
-	output.PrintOpportunities(opportunities)
+	output.PrintOpportunitiesDetailed(opportunities, scanDetailed)
 
 	return nil
 }

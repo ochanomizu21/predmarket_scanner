@@ -4,12 +4,13 @@ import (
 	"github.com/ochanomizu/predmarket-scanner/pkg/types"
 )
 
-const (
-	feeRateBPS = 625
+var (
+	FeeRateBPS     = 625
+	ApplyFees      = true
 )
 
 func CalculatePolymarketFee(profit float64, market types.Market) float64 {
-	if profit <= 0 {
+	if !ApplyFees || profit <= 0 {
 		return 0
 	}
 
@@ -21,7 +22,7 @@ func CalculatePolymarketFee(profit float64, market types.Market) float64 {
 		avgPrice /= float64(len(market.Outcomes))
 	}
 
-	feeRate := float64(feeRateBPS) / 10000.0
+	feeRate := float64(FeeRateBPS) / 10000.0
 	effectiveFeeRate := feeRate * avgPrice * (1 - avgPrice)
 
 	return profit * effectiveFeeRate
