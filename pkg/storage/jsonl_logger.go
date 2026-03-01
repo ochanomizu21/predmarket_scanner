@@ -60,6 +60,9 @@ func (l *JSONLLogger) Start(ctx context.Context) error {
 
 func (l *JSONLLogger) Stop() {
 	close(l.done)
+
+	time.Sleep(100 * time.Millisecond)
+
 	l.mu.Lock()
 	if l.writer != nil {
 		l.writer.Flush()
@@ -79,8 +82,9 @@ func (l *JSONLLogger) Stop() {
 		log.Printf("Closed file: %s\n", l.GetCurrentFilename())
 		l.file = nil
 	}
-	log.Printf("Logger stopped. Total written: %d\n", l.writtenCount)
 	l.mu.Unlock()
+
+	log.Printf("Logger stopped. Total written: %d\n", l.writtenCount)
 }
 
 func (l *JSONLLogger) Log(message map[string]interface{}) error {
@@ -121,10 +125,10 @@ func (l *JSONLLogger) processMessages(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			l.Stop()
+			log.Printf("processMessages: context canceled\n")
 			return
 		case <-l.done:
-			l.Stop()
+			log.Printf("processMessages: done signal received\n")
 			return
 		case data := <-l.messageChan:
 			l.mu.Lock()
@@ -166,12 +170,15 @@ func (l *JSONLLogger) dailyRotation(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("dailyRotation: context canceled\n")
 			return
 		case <-l.done:
+			log.Printf("dailyRotation: done signal received\n")
 			return
 		case <-ticker.C:
 			currentDate := time.Now().UTC().Format("2006-01-02")
 			if currentDate != l.currentDate {
+				log.Printf("dailyRotation: rotating file for new date %s\n", currentDate)
 				l.mu.Lock()
 				l.rotateFileLocked()
 				l.mu.Unlock()
@@ -187,8 +194,10 @@ func (l *JSONLLogger) printStats(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("printStats: context canceled\n")
 			return
 		case <-l.done:
+			log.Printf("printStats: done signal received\n")
 			return
 		case <-ticker.C:
 			l.mu.Lock()
