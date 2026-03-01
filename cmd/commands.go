@@ -805,7 +805,9 @@ func runRecord(cmd *cobra.Command, args []string) error {
 
 	orderBookMgr := types.NewOrderBookManager()
 
-	wsClient := websocket.NewClient(orderBookMgr)
+	wsConfig := websocket.DefaultConfig()
+	wsConfig.DisableProcessing = true
+	wsClient := websocket.NewClientWithConfig(orderBookMgr, wsConfig)
 
 	fmt.Println("Connecting to WebSocket...")
 	if err := wsClient.Connect(ctx); err != nil {

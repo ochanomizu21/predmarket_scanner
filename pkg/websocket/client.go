@@ -23,14 +23,15 @@ const (
 )
 
 type Config struct {
-	PingInterval time.Duration
-	PongWait     time.Duration
-	WriteWait    time.Duration
-	ReadWait     time.Duration
-	MaxReconnect time.Duration
-	InitialDump  *bool
-	Level        *int
-	BatchSize    int
+	PingInterval      time.Duration
+	PongWait          time.Duration
+	WriteWait         time.Duration
+	ReadWait          time.Duration
+	MaxReconnect      time.Duration
+	InitialDump       *bool
+	Level             *int
+	BatchSize         int
+	DisableProcessing bool
 }
 
 type Client struct {
@@ -98,14 +99,15 @@ func (m *Metrics) GetStats() (messages, bookEvents, priceChanges, connections, r
 
 func DefaultConfig() Config {
 	return Config{
-		PingInterval: defaultPingInterval,
-		PongWait:     defaultPongWait,
-		WriteWait:    defaultWriteWait,
-		ReadWait:     defaultReadWait,
-		MaxReconnect: maxReconnectDelay,
-		InitialDump:  boolPtr(true),
-		Level:        intPtr(2),
-		BatchSize:    SubscriptionBatchSize,
+		PingInterval:      defaultPingInterval,
+		PongWait:          defaultPongWait,
+		WriteWait:         defaultWriteWait,
+		ReadWait:          defaultReadWait,
+		MaxReconnect:      maxReconnectDelay,
+		InitialDump:       boolPtr(true),
+		Level:             intPtr(2),
+		BatchSize:         SubscriptionBatchSize,
+		DisableProcessing: false,
 	}
 }
 
@@ -153,7 +155,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	go c.readPump()
 	go c.writePump()
 	go c.pingPump()
-	go c.processMessages()
+	if !c.config.DisableProcessing {
+		go c.processMessages()
+	}
 
 	return nil
 }
