@@ -61,32 +61,35 @@ func (l *JSONLLogger) Start(ctx context.Context) error {
 func (l *JSONLLogger) Stop() {
 	close(l.done)
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	l.mu.Lock()
 	if l.writer != nil {
 		l.writer.Flush()
-		log.Printf("Flushed bufio writer\n")
 		l.writer = nil
 	}
+	l.mu.Unlock()
 
+	// Close gzip with timeout to avoid blocking
 	if l.gzipWriter != nil {
-		l.gzipWriter.Flush()
-		log.Printf("Flushed gzip writer\n")
-		l.mu.Unlock()
+		done := make(chan error, 1)
+		go func() {
+			done <- l.gzipWriter.Close()
+		}()
 
-		l.gzipWriter.Close()
-		log.Printf("Closed gzip writer\n")
+		select {
+		case <-done:
+			// Gzip closed successfully
+		case <-time.After(2 * time.Second):
+			// Timeout - skip close, file may be partial
+		}
 		l.gzipWriter = nil
-	} else {
-		l.mu.Unlock()
 	}
 
 	l.mu.Lock()
 	if l.file != nil {
 		l.file.Sync()
 		l.file.Close()
-		log.Printf("Closed file: %s\n", l.GetCurrentFilename())
 		l.file = nil
 	}
 	l.mu.Unlock()
@@ -132,35 +135,27 @@ func (l *JSONLLogger) processMessages(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("processMessages: context canceled\n")
 			return
 		case <-l.done:
-			log.Printf("processMessages: done signal received\n")
 			return
 		case data := <-l.messageChan:
 			l.mu.Lock()
 			l.receivedCount++
 			l.mu.Unlock()
 			l.mu.Lock()
-			if l.writer != nil {
+			if l.gzipWriter != nil {
 				lineToWrite := append(data, '\n')
-				if _, err := l.writer.Write(lineToWrite); err != nil {
+				if _, err := l.gzipWriter.Write(lineToWrite); err != nil {
 					log.Printf("Write error: %v\n", err)
 				} else {
 					messageCount++
 					l.writtenCount++
 					if messageCount%100 == 0 {
-						l.writer.Flush()
 						if l.gzipWriter != nil {
 							l.gzipWriter.Flush()
 						}
 						if l.file != nil {
 							l.file.Sync()
-						}
-						if messageCount%1000 == 0 {
-							if stat, err := l.file.Stat(); err == nil {
-								log.Printf("Flushed %d messages, file size: %d bytes\n", messageCount, stat.Size())
-							}
 						}
 					}
 				}
@@ -177,15 +172,12 @@ func (l *JSONLLogger) dailyRotation(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("dailyRotation: context canceled\n")
 			return
 		case <-l.done:
-			log.Printf("dailyRotation: done signal received\n")
 			return
 		case <-ticker.C:
 			currentDate := time.Now().UTC().Format("2006-01-02")
 			if currentDate != l.currentDate {
-				log.Printf("dailyRotation: rotating file for new date %s\n", currentDate)
 				l.mu.Lock()
 				l.rotateFileLocked()
 				l.mu.Unlock()
@@ -201,10 +193,8 @@ func (l *JSONLLogger) printStats(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("printStats: context canceled\n")
 			return
 		case <-l.done:
-			log.Printf("printStats: done signal received\n")
 			return
 		case <-ticker.C:
 			l.mu.Lock()
@@ -261,7 +251,8 @@ func (l *JSONLLogger) rotateFileLocked() error {
 
 	l.file = file
 	l.gzipWriter = gzip.NewWriter(file)
-	l.writer = bufio.NewWriterSize(l.gzipWriter, 64*1024)
+	// Don't use bufio - write directly to gzip for proper closing
+	l.writer = nil
 	l.currentDate = currentDate
 
 	return nil
