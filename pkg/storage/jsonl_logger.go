@@ -15,7 +15,7 @@ import (
 
 type JSONLLogger struct {
 	dataDir       string
-	currentDate   string
+	runID         string
 	file          *os.File
 	gzipWriter    *gzip.Writer
 	writer        *bufio.Writer
@@ -37,6 +37,7 @@ type LogMessage struct {
 func NewJSONLLogger(dataDir string) *JSONLLogger {
 	return &JSONLLogger{
 		dataDir:     dataDir,
+		runID:       time.Now().UTC().Format("2006-01-02_150405"),
 		messageChan: make(chan []byte, 10000),
 		done:        make(chan struct{}),
 	}
@@ -52,8 +53,6 @@ func (l *JSONLLogger) Start(ctx context.Context) error {
 	}
 
 	go l.processMessages(ctx)
-	go l.dailyRotation(ctx)
-	go l.periodicRotation(ctx)
 	go l.printStats(ctx)
 
 	return nil
@@ -142,8 +141,6 @@ func (l *JSONLLogger) processMessages(ctx context.Context) {
 		case data := <-l.messageChan:
 			l.mu.Lock()
 			l.receivedCount++
-			l.mu.Unlock()
-			l.mu.Lock()
 			if l.gzipWriter != nil {
 				lineToWrite := append(data, '\n')
 				if _, err := l.gzipWriter.Write(lineToWrite); err != nil {
@@ -152,71 +149,12 @@ func (l *JSONLLogger) processMessages(ctx context.Context) {
 					messageCount++
 					l.writtenCount++
 					if messageCount%100 == 0 {
-						if l.gzipWriter != nil {
-							l.gzipWriter.Flush()
-						}
-						if l.file != nil {
-							l.file.Sync()
-						}
+						l.gzipWriter.Flush()
+						l.file.Sync()
 					}
 				}
-			}
-			l.mu.Unlock()
-		}
-	}
-}
-
-func (l *JSONLLogger) dailyRotation(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-l.done:
-			return
-		case <-ticker.C:
-			currentDate := time.Now().UTC().Format("2006-01-02")
-			if currentDate != l.currentDate {
-				l.mu.Lock()
-				l.rotateFileLocked()
-				l.mu.Unlock()
-			}
-		}
-	}
-}
-
-func (l *JSONLLogger) periodicRotation(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-l.done:
-			return
-		case <-ticker.C:
-			l.mu.Lock()
-			// Close current gzip and start new one to ensure valid files
-			if l.gzipWriter != nil {
-				l.gzipWriter.Close()
-				l.gzipWriter = nil
-			}
-			if l.file != nil {
-				l.file.Sync()
-				l.file.Close()
-				l.file = nil
-			}
-			// Reopen same file (append mode)
-			currentDate := time.Now().UTC().Format("2006-01-02")
-			filename := filepath.Join(l.dataDir, fmt.Sprintf("market_data_%s.jsonl.gz", currentDate))
-			file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err == nil {
-				l.file = file
-				l.gzipWriter = gzip.NewWriter(file)
-				log.Printf("Rotated gzip file for valid file completion")
+			} else {
+				log.Printf("Warning: gzipWriter is nil, dropping message")
 			}
 			l.mu.Unlock()
 		}
@@ -278,8 +216,7 @@ func (l *JSONLLogger) rotateFileLocked() error {
 		l.file = nil
 	}
 
-	currentDate := time.Now().UTC().Format("2006-01-02")
-	filename := filepath.Join(l.dataDir, fmt.Sprintf("market_data_%s.jsonl.gz", currentDate))
+	filename := filepath.Join(l.dataDir, fmt.Sprintf("market_data_%s.jsonl.gz", l.runID))
 
 	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -290,7 +227,6 @@ func (l *JSONLLogger) rotateFileLocked() error {
 	l.gzipWriter = gzip.NewWriter(file)
 	// Don't use bufio - write directly to gzip for proper closing
 	l.writer = nil
-	l.currentDate = currentDate
 
 	return nil
 }
@@ -314,8 +250,8 @@ func (l *JSONLLogger) GetCurrentFilename() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.currentDate == "" {
+	if l.runID == "" {
 		return ""
 	}
-	return filepath.Join(l.dataDir, fmt.Sprintf("market_data_%s.jsonl.gz", l.currentDate))
+	return filepath.Join(l.dataDir, fmt.Sprintf("market_data_%s.jsonl.gz", l.runID))
 }

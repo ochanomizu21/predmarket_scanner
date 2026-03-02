@@ -829,7 +829,10 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	fmt.Println("Press Ctrl+C to stop recording...")
 
 	msgChan := wsClient.GetMessageChannel()
+	errorChan := wsClient.GetErrorChannel()
 	ticker := time.NewTicker(5 * time.Second)
+	dataTimeout := 5 * time.Minute
+	lastDataTime := time.Now()
 	defer ticker.Stop()
 
 	messageCount := 0
@@ -843,16 +846,50 @@ func runRecord(cmd *cobra.Command, args []string) error {
 
 		case message := <-msgChan:
 			messageCount++
+			lastDataTime = time.Now()
 
 			if err := logger.LogRaw(message); err != nil {
 				fmt.Printf("Logger error: %v\n", err)
 			}
+
+		case err := <-errorChan:
+			fmt.Printf("\nWebSocket error: %v\n", err)
+			fmt.Println("Attempting to reconnect...")
+
+			wsClient.Disconnect()
+			if err := wsClient.Connect(ctx); err != nil {
+				fmt.Printf("Reconnect failed: %v\n", err)
+				continue
+			}
+
+			if err := wsClient.Subscribe(allTokenIDs); err != nil {
+				fmt.Printf("Resubscribe failed: %v\n", err)
+				continue
+			}
+
+			fmt.Println("Successfully reconnected and resubscribed")
+			lastDataTime = time.Now()
 
 		case <-ticker.C:
 			metrics := wsClient.GetMetrics()
 			messages, bookEvents, priceChanges, connections, reconnections := metrics.GetStats()
 			fmt.Printf("\rMessages: %d | Book Events: %d | Price Changes: %d | Connections: %d | Reconnections: %d",
 				messages, bookEvents, priceChanges, connections, reconnections)
+
+			if time.Since(lastDataTime) > dataTimeout {
+				fmt.Printf("\nNo data received for %v, reconnecting...\n", dataTimeout)
+				wsClient.Disconnect()
+				if err := wsClient.Connect(ctx); err != nil {
+					fmt.Printf("Reconnect failed: %v\n", err)
+					continue
+				}
+				if err := wsClient.Subscribe(allTokenIDs); err != nil {
+					fmt.Printf("Resubscribe failed: %v\n", err)
+					continue
+				}
+				fmt.Println("Successfully reconnected and resubscribed")
+				lastDataTime = time.Now()
+			}
 		}
 	}
 }

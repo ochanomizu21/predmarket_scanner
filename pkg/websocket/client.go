@@ -129,6 +129,13 @@ func NewClientWithConfig(orderBookMgr *types.OrderBookManager, config Config) *C
 	}
 }
 
+func (c *Client) resetContext() {
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+}
+
 func (c *Client) Connect(ctx context.Context) error {
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 45 * time.Second,
@@ -167,6 +174,7 @@ func (c *Client) Disconnect() error {
 	defer c.mu.Unlock()
 
 	if !c.connected {
+		c.resetContext()
 		return nil
 	}
 
@@ -181,6 +189,7 @@ func (c *Client) Disconnect() error {
 	}
 
 	c.connected = false
+	c.resetContext()
 	return nil
 }
 
@@ -524,6 +533,10 @@ func (c *Client) IsConnected() bool {
 
 func (c *Client) GetMessageChannel() <-chan []byte {
 	return c.messageChan
+}
+
+func (c *Client) GetErrorChannel() <-chan error {
+	return c.errorChan
 }
 
 func boolPtr(b bool) *bool {
